@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media.Imaging;
@@ -28,6 +29,13 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
     private readonly NexusMediaScraper _mediaScraper;
     private readonly IHostServices _host;
     private readonly EventHandler _apiKeyChangedHandler;
+    // Coalesce fuer parallele RefreshAsync-Aufrufe. ApiKeyChanged feuert
+    // im v1.14.2-Host mehrfach (Save → RaiseApiKeyChanged → Validate →
+    // erneut RaiseApiKeyChanged). Ohne dieses Gate laufen dann N x
+    // LoadFromCache (Rows.Clear/Add) + N x LoadCoversAsync parallel →
+    // Race + leere Rows.
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private DateTime _lastRefreshAt = DateTime.MinValue;
 
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private bool _isBusy;
@@ -129,21 +137,34 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
             Rows.Clear();
             return;
         }
+        // Serialisiere parallele Refreshes (ApiKeyChanged feuert im
+        // v1.14.2-Host mehrfach). Wenn ein Refresh gerade lief und juenger
+        // als 5 s ist, ueberspringen — sonst zerstoeren wir den Cover-Load
+        // der ersten Runde durch einen ueberlappenden Rows.Clear/Add.
+        if (!await _refreshGate.WaitAsync(0))
+            return;
         try
         {
-            IsBusy = true;
-            StatusText = "Lade Katalog …";
-            await _catalog.RefreshAsync();
-            LoadFromCache();
-            _ = LoadCategoriesAsync();
-            _ = LoadCoversAsync();
+            if (DateTime.UtcNow - _lastRefreshAt < TimeSpan.FromSeconds(5))
+                return;
+            try
+            {
+                IsBusy = true;
+                StatusText = "Lade Katalog …";
+                await _catalog.RefreshAsync();
+                LoadFromCache();
+                _ = LoadCategoriesAsync();
+                _ = LoadCoversAsync();
+                _lastRefreshAt = DateTime.UtcNow;
+            }
+            catch (Exception ex)
+            {
+                _host.Logger.Warn(ex, "Cyberpunk Nexus-Refresh fehlgeschlagen");
+                StatusText = "Refresh-Fehler: " + ex.Message;
+            }
+            finally { IsBusy = false; }
         }
-        catch (Exception ex)
-        {
-            _host.Logger.Warn(ex, "Cyberpunk Nexus-Refresh fehlgeschlagen");
-            StatusText = "Refresh-Fehler: " + ex.Message;
-        }
-        finally { IsBusy = false; }
+        finally { _refreshGate.Release(); }
     }
 
     private async Task LoadCategoriesAsync()

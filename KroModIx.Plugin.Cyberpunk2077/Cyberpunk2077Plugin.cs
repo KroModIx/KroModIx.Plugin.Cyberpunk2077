@@ -20,7 +20,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.6.1",
+        Version: "0.6.2",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert / Nexus-Katalog / Downloads. " +
             "v0.6: Screenshot-Galerie im Detail-Dialog (aus Nexus-Media-Tab gescraped) + " +

@@ -97,9 +97,18 @@ public sealed class CoverCache
             var ext = GuessExtension(bytes);
             if (ext is null) return null;
             var target = basePath + ext;
-            var tmp = target + ".tmp";
+            // v0.6.2: Race-safe temp filename. Vorher war der tmp-Name
+            // shared (target + ".tmp") — bei parallelen Downloads derselben
+            // URL (z.B. wenn NexusViewModel.RefreshAsync 8x kurz nacheinander
+            // laeuft) ueberschrieb Task-A den tmp, Task-B versuchte danach
+            // File.Move auf einen tmp der schon wegverschoben war → crash.
+            // Mit einem GUID-suffix hat jeder Task seinen eigenen tmp;
+            // File.Move-overwrite auf das gleiche target ist unproblematisch
+            // (wer zuletzt gewinnt — beide Bytes-Streams sind identisch).
+            var tmp = target + ".tmp." + Guid.NewGuid().ToString("N");
             await File.WriteAllBytesAsync(tmp, bytes, timeout.Token);
-            File.Move(tmp, target, overwrite: true);
+            try { File.Move(tmp, target, overwrite: true); }
+            catch (IOException) { try { File.Delete(tmp); } catch { } throw; }
             return target;
         }
         catch (Exception ex)
