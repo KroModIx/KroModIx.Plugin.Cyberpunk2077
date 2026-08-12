@@ -20,16 +20,17 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.6.2",
+        Version: "0.7.0",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert / Nexus-Katalog / Downloads. " +
-            "v0.6: Screenshot-Galerie im Detail-Dialog (aus Nexus-Media-Tab gescraped) + " +
-            "Fullscreen-Viewer mit Pfeil-Navigation. " +
+            "v0.7: Voll-Katalog via Nexus-GraphQL (~23000 Cyberpunk-Mods verfuegbar), " +
+            "Pagination mit 'Mehr laden'-Button, Server-side Volltextsuche, Sort-Dropdown " +
+            "(Neueste Updates / Neu / Endorsements / Downloads). " +
+            "v0.6: Screenshot-Galerie im Detail-Dialog + Fullscreen-Viewer. " +
             "v0.5: Nexus-Detail-Dialog mit voller Beschreibung + KI-Zusammenfassung, " +
-            "Premium-Direct-Download aus Katalog & Detail, Adult-Warning-Badge, Auto-Refresh " +
-            "des Downloads-Tabs nach Direct-Download. " +
-            "v0.4: Update-Discovery für REDmods + grüner ↑-Badge auf der Sidebar-Kachel (IUpdateNotifier). " +
-            "Nutzt Host-Nexus-Baukasten (Contracts v1.14.0), API-Key wird zentral im Host-Settings verwaltet.");
+            "Premium-Direct-Download, Adult-Warning-Badge. " +
+            "v0.4: Update-Discovery fuer REDmods + gruener ↑-Badge (IUpdateNotifier). " +
+            "Nutzt Host-Nexus-Baukasten (Contracts v1.15.0), MinHostVersion 1.15.0.");
 
     public IReadOnlyList<GameTarget> Targets { get; } = new[]
     {

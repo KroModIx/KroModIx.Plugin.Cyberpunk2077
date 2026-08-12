@@ -1,46 +1,62 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 
 namespace KroModIx.Plugin.Cyberpunk2077.Views;
 
-/// <summary>Katalog-Tab (v0.5): Toolbar mit Refresh + Filter + Kategorie,
-/// darunter Row-Karten mit Cover, Meta-Zeile und Buttons (Download,
-/// Details, Nexus öffnen). Doppelklick auf eine Row öffnet den
-/// Detail-Dialog. Analog Icarus-NexusView.</summary>
+/// <summary>Katalog-Tab (v0.7): Toolbar mit Suchfeld + Sortier-Dropdown +
+/// Aktualisieren-Button. Row-Liste mit Cover, Meta-Zeile und Aktions-
+/// Buttons. Unten „📚 Mehr laden"-Button fuer die naechste Seite (Nexus
+/// hat ~23000 Cyberpunk-Mods, laden erfolgt in 40er-Bloecken).</summary>
 public sealed class NexusView : UserControl
 {
     public NexusView()
     {
-        var refreshBtn = new Button { Content = "🔄  Katalog aktualisieren" };
-        refreshBtn.Classes.Add("accent");
+        var refreshBtn = new Button { Content = "🔄  Aktualisieren" };
         refreshBtn.Bind(Button.CommandProperty,
-            new Binding(nameof(NexusViewModel.RefreshCommand)));
+            new Binding(nameof(NexusViewModel.LoadFirstPageCommand)));
+        ToolTip.SetTip(refreshBtn, "Katalog neu laden (erste Seite)");
 
-        var filter = new TextBox
+        var search = new TextBox
         {
-            PlaceholderText = "🔍 Filter Name/Autor",
-            Width = 240,
+            PlaceholderText = "🔍 Nexus durchsuchen — Enter zum Suchen",
+            Width = 320,
         };
-        filter.Bind(TextBox.TextProperty,
-            new Binding(nameof(NexusViewModel.FilterText)) { Mode = BindingMode.TwoWay });
+        search.Bind(TextBox.TextProperty,
+            new Binding(nameof(NexusViewModel.SearchQuery)) { Mode = BindingMode.TwoWay });
+        // Enter feuert die Suche — kein Auto-Search bei jedem Tastendruck
+        // (das wuerde N GraphQL-Requests pro Wort machen).
+        search.KeyDown += (s, e) =>
+        {
+            if (e.Key == Key.Enter && (s as TextBox)?.DataContext is NexusViewModel vm)
+                vm.SearchCommand.Execute(null);
+        };
 
-        var catCombo = new ComboBox { Width = 200 };
-        catCombo.Bind(ComboBox.ItemsSourceProperty, new Binding(nameof(NexusViewModel.Categories)));
-        catCombo.Bind(ComboBox.SelectedItemProperty,
-            new Binding(nameof(NexusViewModel.SelectedCategory)) { Mode = BindingMode.TwoWay });
-        catCombo.ItemTemplate = new FuncDataTemplate<NexusCategoryOption>((c, _) =>
-            c is null ? null : new TextBlock { Text = c.Name }, true);
+        var searchBtn = new Button { Content = "🔎  Suchen" };
+        searchBtn.Classes.Add("accent");
+        searchBtn.Bind(Button.CommandProperty,
+            new Binding(nameof(NexusViewModel.SearchCommand)));
+
+        var sortCombo = new ComboBox { Width = 180 };
+        sortCombo.Bind(ComboBox.ItemsSourceProperty,
+            new Binding(nameof(NexusViewModel.SortOptions)));
+        sortCombo.Bind(ComboBox.SelectedItemProperty,
+            new Binding(nameof(NexusViewModel.SelectedSort)) { Mode = BindingMode.TwoWay });
+        sortCombo.ItemTemplate = new FuncDataTemplate<NexusSortOption>((o, _) =>
+            o is null ? null : new TextBlock { Text = o.Label }, true);
+        ToolTip.SetTip(sortCombo, "Sortier-Reihenfolge");
 
         var toolbar = new StackPanel
         {
             Orientation = Orientation.Horizontal, Spacing = 8,
             Margin = new Thickness(0, 0, 0, 8),
-            Children = { refreshBtn, filter, catCombo },
+            Children = { search, searchBtn, sortCombo, refreshBtn },
         };
 
         var status = new TextBlock { Margin = new Thickness(0, 0, 0, 8) };
@@ -57,11 +73,32 @@ public sealed class NexusView : UserControl
         list.Bind(ListBox.ItemsSourceProperty, new Binding(nameof(NexusViewModel.Rows)));
         list.ItemTemplate = new FuncDataTemplate<NexusRow>((row, _) =>
             row is null ? null : BuildRowCard(), true);
-        // Doppelklick auf Row öffnet Detail-Dialog.
         list.DoubleTapped += (_, _) =>
         {
             if (DataContext is NexusViewModel vm && list.SelectedItem is NexusRow row)
                 vm.ShowDetailCommand.Execute(row);
+        };
+
+        // „Mehr laden"-Button am Ende der Liste. Nur enabled wenn noch nicht
+        // alle Mods aus totalCount geladen sind.
+        var loadMoreBtn = new Button { Content = "📚  Mehr laden" };
+        loadMoreBtn.HorizontalAlignment = HorizontalAlignment.Center;
+        loadMoreBtn.Margin = new Thickness(0, 12, 0, 12);
+        loadMoreBtn.Classes.Add("accent");
+        loadMoreBtn.Bind(Button.CommandProperty,
+            new Binding(nameof(NexusViewModel.LoadMoreCommand)));
+        loadMoreBtn.Bind(Button.IsVisibleProperty, new Binding(nameof(NexusViewModel.HasMore)));
+
+        // Scroll-Container fuer die Liste + Load-More-Button darunter.
+        var scrollContent = new StackPanel
+        {
+            Children = { list, loadMoreBtn },
+        };
+        var scroll = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = scrollContent,
         };
 
         Content = new DockPanel
@@ -71,14 +108,13 @@ public sealed class NexusView : UserControl
             {
                 WithDock(toolbar, Dock.Top),
                 WithDock(status, Dock.Top),
-                list,
+                scroll,
             },
         };
     }
 
     private static Control BuildRowCard()
     {
-        // Cover 140x90 (Nexus liefert typischerweise 400x225 als picture_url).
         var coverFrame = new Border
         {
             Width = 140, Height = 90,
@@ -112,7 +148,6 @@ public sealed class NexusView : UserControl
         };
         title.Bind(TextBlock.TextProperty, new Binding(nameof(NexusRow.Name)));
 
-        // Meta-Zeile: Autor · Version · Aktualisiert · Endorsements
         var meta = new StackPanel
         {
             Orientation = Orientation.Horizontal, Spacing = 8,
@@ -156,9 +191,6 @@ public sealed class NexusView : UserControl
             Children = { title, meta, summary },
         };
 
-        // Premium-Download — Command via FindAncestor (ListBox.DataContext),
-        // IsEnabled aber DIREKT an Row.IsPremium (RelativeSource-Bind für
-        // bool klappt im FuncDataTemplate in Avalonia 12 nicht zuverlaessig).
         var downloadBtn = new Button { Content = "⬇  Download" };
         downloadBtn.Classes.Add("accent");
         downloadBtn.Bind(Button.CommandProperty, new Binding
@@ -169,7 +201,7 @@ public sealed class NexusView : UserControl
         });
         downloadBtn.Bind(Button.CommandParameterProperty, new Binding("."));
         downloadBtn.Bind(Button.IsEnabledProperty, new Binding(nameof(NexusRow.IsPremium)));
-        ToolTip.SetTip(downloadBtn, "Direct-Download in den Downloads-Ordner (Nexus-Premium nötig)");
+        ToolTip.SetTip(downloadBtn, "Direct-Download in den Downloads-Ordner (Nexus-Premium noetig)");
 
         var detailBtn = new Button { Content = "🔍  Details" };
         detailBtn.Bind(Button.CommandProperty, new Binding

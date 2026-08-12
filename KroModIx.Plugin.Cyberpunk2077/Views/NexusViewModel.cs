@@ -15,10 +15,12 @@ using KroModIx.Plugin.Cyberpunk2077.Services;
 
 namespace KroModIx.Plugin.Cyberpunk2077.Views;
 
-/// <summary>Katalog-Tab (v0.5): aggregierter Nexus-Katalog (latest_added +
-/// latest_updated + trending). Cover-Enrichment im Hintergrund, Kategorien-
-/// Filter, pro Row eigene Buttons (Download für Premium, Details-Dialog,
-/// Nexus öffnen). Doppelklick öffnet den Detail-Dialog.</summary>
+/// <summary>Katalog-Tab (v0.7): Voll-Katalog via
+/// <see cref="INexusService.SearchModsAsync"/> (Contracts v1.15.0+
+/// GraphQL). Pagination mit „Mehr laden"-Button, Server-side Volltext-
+/// suche und Sort-Dropdown (Neueste Updates / Neueste Adds / Endorsements
+/// / Downloads). Cover-Enrichment im Hintergrund pro Seite. Detail-Dialog
+/// mit Screenshot-Galerie + KI-Zusammenfassung + Premium-Direct-Download.</summary>
 public sealed partial class NexusViewModel : ObservableObject, IDisposable
 {
     private readonly CyberpunkNexusCatalog _catalog;
@@ -29,22 +31,20 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
     private readonly NexusMediaScraper _mediaScraper;
     private readonly IHostServices _host;
     private readonly EventHandler _apiKeyChangedHandler;
-    // Coalesce fuer parallele RefreshAsync-Aufrufe. ApiKeyChanged feuert
-    // im v1.14.2-Host mehrfach (Save → RaiseApiKeyChanged → Validate →
-    // erneut RaiseApiKeyChanged). Ohne dieses Gate laufen dann N x
-    // LoadFromCache (Rows.Clear/Add) + N x LoadCoversAsync parallel →
-    // Race + leere Rows.
-    private readonly SemaphoreSlim _refreshGate = new(1, 1);
-    private DateTime _lastRefreshAt = DateTime.MinValue;
+    private readonly SemaphoreSlim _loadGate = new(1, 1);
 
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private bool _isBusy;
-    [ObservableProperty] private string _filterText = "";
-    [ObservableProperty] private NexusCategoryOption? _selectedCategory;
 
-    /// <summary>Aus <see cref="INexusService.IsPremium"/> — steuert ob die
-    /// Download-Buttons in den Rows enabled sind. Änderung propagiert auf
-    /// alle Row-Instanzen (siehe <see cref="OnIsPremiumChanged"/>).</summary>
+    /// <summary>User-Eingabe im Suchfeld. Wird per <see cref="SearchCommand"/>
+    /// (Enter/Button) an den GraphQL-Server geschickt — kein Auto-Search
+    /// bei jedem Tastendruck (das wuerde N API-Calls pro Wort machen).</summary>
+    [ObservableProperty] private string _searchQuery = "";
+
+    /// <summary>Ausgewaehlte Sortier-Option. Umschalten triggert einen
+    /// Reset (erste Seite mit neuem Sort laden).</summary>
+    [ObservableProperty] private NexusSortOption _selectedSort = SortOptions[0];
+
     [ObservableProperty] private bool _isPremium;
 
     partial void OnIsPremiumChanged(bool value)
@@ -52,10 +52,23 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         foreach (var row in Rows) row.IsPremium = value;
     }
 
-    public ObservableCollection<NexusRow> Rows { get; } = new();
-    public ObservableCollection<NexusCategoryOption> Categories { get; } = new();
+    partial void OnSelectedSortChanged(NexusSortOption value)
+    {
+        _ = LoadFirstPageAsync();
+    }
 
-    private List<NexusRow> _all = new();
+    public ObservableCollection<NexusRow> Rows { get; } = new();
+
+    public static IReadOnlyList<NexusSortOption> SortOptions { get; } = new[]
+    {
+        new NexusSortOption("Neueste Updates", NexusSort.LatestUpdate),
+        new NexusSortOption("Neu hinzugefuegt", NexusSort.LatestAdd),
+        new NexusSortOption("Meistgeliked", NexusSort.MostEndorsed),
+        new NexusSortOption("Meistgeladen", NexusSort.MostDownloaded),
+    };
+
+    public bool HasMore => _catalog.HasMore;
+
     private Dictionary<int, string> _categoryMap = new();
 
     public NexusViewModel(CyberpunkNexusCatalog catalog, CoverCache covers,
@@ -71,12 +84,10 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         _mediaScraper = mediaScraper;
         _host = host;
         IsPremium = _nexus.IsPremium;
-        // Bei Key-Change (User trägt neuen im Host-Settings ein) → Refresh
-        // und Premium-Flag synchronisieren.
         _apiKeyChangedHandler = (_, _) => Dispatcher.UIThread.Post(() =>
         {
             IsPremium = _nexus.IsPremium;
-            _ = RefreshAsync();
+            _ = LoadFirstPageAsync();
         });
         _nexus.ApiKeyChanged += _apiKeyChangedHandler;
         _ = InitialLoadAsync();
@@ -90,82 +101,99 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
     private async Task InitialLoadAsync()
     {
         if (_catalog.Cached.Count == 0)
-            await RefreshAsync();
+            await LoadFirstPageAsync();
         else
-            LoadFromCache();
+            RebuildRowsFromCatalog();
     }
 
-    private void LoadFromCache()
+    private void RebuildRowsFromCatalog()
     {
-        _all = _catalog.Cached.Select(e => new NexusRow(e) { IsPremium = IsPremium }).ToList();
-        ApplyFilter();
-        StatusText = $"{_all.Count} Mods · {_catalog.CachedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
-    }
-
-    partial void OnFilterTextChanged(string value) => ApplyFilter();
-    partial void OnSelectedCategoryChanged(NexusCategoryOption? value) => ApplyFilter();
-
-    private void ApplyFilter()
-    {
-        var q = FilterText?.Trim() ?? "";
-        var catFilter = SelectedCategory?.CategoryId;
         Rows.Clear();
-        var matched = _all.Where(r =>
-            (string.IsNullOrEmpty(q)
-                || r.Source.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
-                || r.Source.Author.Contains(q, StringComparison.OrdinalIgnoreCase))
-            && (catFilter is null || GetCategoryIdForRow(r) == catFilter))
-            .ToList();
-        foreach (var r in matched) Rows.Add(r);
+        foreach (var e in _catalog.Cached)
+            Rows.Add(new NexusRow(e) { IsPremium = IsPremium });
+        UpdateStatus();
+        OnPropertyChanged(nameof(HasMore));
     }
 
-    private int? GetCategoryIdForRow(NexusRow r)
+    private void UpdateStatus()
     {
-        // Kategorie steht nur im Volldetail — der Katalog-Endpoint liefert
-        // die nicht. Für den Filter reicht dass wir NULL zurueckliefern
-        // wenn wir noch nicht angefragt haben — dann wird nicht gefiltert.
-        return null;
+        var loaded = _catalog.Cached.Count;
+        var total = _catalog.TotalCount;
+        var qHint = string.IsNullOrWhiteSpace(_catalog.CurrentQuery)
+            ? ""
+            : $" — Suche '{_catalog.CurrentQuery}'";
+        StatusText = total > 0
+            ? $"{loaded} von {total} Mods geladen{qHint}"
+            : $"{loaded} Mods{qHint}";
     }
 
     [RelayCommand]
-    private async Task RefreshAsync()
+    private async Task LoadFirstPageAsync()
     {
         if (!_nexus.HasApiKey)
         {
             StatusText = "Kein Nexus-API-Key im Host-Settings — bitte unter 🌐 Nexus eintragen.";
-            _all = new();
             Rows.Clear();
             return;
         }
-        // Serialisiere parallele Refreshes (ApiKeyChanged feuert im
-        // v1.14.2-Host mehrfach). Wenn ein Refresh gerade lief und juenger
-        // als 5 s ist, ueberspringen — sonst zerstoeren wir den Cover-Load
-        // der ersten Runde durch einen ueberlappenden Rows.Clear/Add.
-        if (!await _refreshGate.WaitAsync(0))
-            return;
+        if (!await _loadGate.WaitAsync(0)) return;
         try
         {
-            if (DateTime.UtcNow - _lastRefreshAt < TimeSpan.FromSeconds(5))
-                return;
-            try
-            {
-                IsBusy = true;
-                StatusText = "Lade Katalog …";
-                await _catalog.RefreshAsync();
-                LoadFromCache();
-                _ = LoadCategoriesAsync();
-                _ = LoadCoversAsync();
-                _lastRefreshAt = DateTime.UtcNow;
-            }
-            catch (Exception ex)
-            {
-                _host.Logger.Warn(ex, "Cyberpunk Nexus-Refresh fehlgeschlagen");
-                StatusText = "Refresh-Fehler: " + ex.Message;
-            }
-            finally { IsBusy = false; }
+            IsBusy = true;
+            StatusText = "Lade Katalog …";
+            await _catalog.LoadFirstPageAsync(SelectedSort.Value, SearchQuery);
+            RebuildRowsFromCatalog();
+            _ = LoadCoversAsync(0);
+            if (_categoryMap.Count == 0) _ = LoadCategoriesAsync();
         }
-        finally { _refreshGate.Release(); }
+        catch (Exception ex)
+        {
+            _host.Logger.Warn(ex, "Cyberpunk Nexus-Load-First fehlgeschlagen");
+            StatusText = "Fehler: " + ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+            _loadGate.Release();
+        }
     }
+
+    /// <summary>„Mehr laden" — appended die naechste Seite an die vorhandenen
+    /// Rows, ohne die bereits geladenen Cover zu verlieren.</summary>
+    [RelayCommand]
+    private async Task LoadMoreAsync()
+    {
+        if (!_catalog.HasMore) return;
+        if (!await _loadGate.WaitAsync(0)) return;
+        try
+        {
+            IsBusy = true;
+            var beforeCount = _catalog.Cached.Count;
+            await _catalog.LoadNextPageAsync();
+            var added = _catalog.Cached.Count - beforeCount;
+            for (int i = beforeCount; i < _catalog.Cached.Count; i++)
+                Rows.Add(new NexusRow(_catalog.Cached[i]) { IsPremium = IsPremium });
+            UpdateStatus();
+            OnPropertyChanged(nameof(HasMore));
+            _ = LoadCoversAsync(beforeCount);
+        }
+        catch (Exception ex)
+        {
+            _host.Logger.Warn(ex, "Cyberpunk Nexus-Load-More fehlgeschlagen");
+            StatusText = "Load-More-Fehler: " + ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+            _loadGate.Release();
+        }
+    }
+
+    /// <summary>Ausgeloest vom Search-Button oder Enter im Suchfeld. Setzt
+    /// die Query im Katalog und laedt die erste Seite frisch. Leerer
+    /// String = Suche zuruecksetzen, alle Mods.</summary>
+    [RelayCommand]
+    private Task SearchAsync() => LoadFirstPageAsync();
 
     private async Task LoadCategoriesAsync()
     {
@@ -173,14 +201,6 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         {
             var cats = await _nexus.GetCategoriesAsync(CyberpunkNexusCatalog.GameSlug);
             _categoryMap = cats.ToDictionary(c => c.CategoryId, c => c.Name);
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                Categories.Clear();
-                Categories.Add(new NexusCategoryOption(null, "Alle Kategorien"));
-                foreach (var c in cats.OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase))
-                    Categories.Add(new NexusCategoryOption(c.CategoryId, c.Name));
-                if (SelectedCategory is null) SelectedCategory = Categories[0];
-            });
         }
         catch (Exception ex)
         {
@@ -188,14 +208,21 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task LoadCoversAsync()
+    /// <summary>Cover fuer eine bestimmte Row-Range (ab startIndex bis Ende
+    /// von Rows) laden. Wird pro geladener Seite aufgerufen — Bereits
+    /// geladene Cover werden nicht angefasst.</summary>
+    private async Task LoadCoversAsync(int startIndex)
     {
-        // Sequenziell mit 250 ms Pause zwischen den Downloads (Rate-Limit-
-        // freundlich; 20 Rows × 250 ms = 5 s bis alle Cover da sind).
-        // Bitmap-Decode auf Background-Thread damit die UI nicht friert.
-        foreach (var row in _all)
+        // Rows-Snapshot damit spaeteres LoadMore die Iteration nicht stoert.
+        var snapshot = new List<NexusRow>();
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            for (int i = startIndex; i < Rows.Count; i++) snapshot.Add(Rows[i]);
+        });
+        foreach (var row in snapshot)
         {
             if (string.IsNullOrEmpty(row.Source.PictureUrl)) continue;
+            if (row.Cover is not null) continue;
             var path = await _covers.GetOrDownloadCoverAsync(row.Source.PictureUrl);
             if (path is null) continue;
             try
@@ -211,7 +238,7 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
             {
                 _host.Logger.Debug(ex, "Cover-Bitmap-Load fuer {Id} fehlgeschlagen", row.Source.ModId);
             }
-            await Task.Delay(250);
+            await Task.Delay(150);
         }
     }
 
@@ -223,10 +250,6 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
             $"https://www.nexusmods.com/{CyberpunkNexusCatalog.GameSlug}/mods/{row.Source.ModId}");
     }
 
-    /// <summary>Öffnet den Detail-Dialog für die Row. Analog Icarus:
-    /// eigenes Modal-Fenster mit Owner=MainWindow, VM lädt <c>/mods/{id}.json</c>
-    /// async, KI-Zusammenfassung über <c>_host.Ai</c>, Premium-Download
-    /// aus dem Footer.</summary>
     [RelayCommand]
     private void ShowDetail(NexusRow? row)
     {
@@ -240,10 +263,6 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         if (owner is not null) window.Show(owner); else window.Show();
     }
 
-    /// <summary>Direkt-Download für Premium-User: nutzt
-    /// <see cref="CyberpunkDownloader.DownloadPrimaryAsync"/>. Fortschritt in
-    /// der Host-Statusbar, nach Erfolg feuert der Event-Bus damit der
-    /// Downloads-Tab sich auto-refresht.</summary>
     [RelayCommand]
     private async Task DownloadRowAsync(NexusRow? row)
     {
@@ -287,21 +306,16 @@ public sealed partial class NexusRow : ObservableObject
     public NexusRow(NexusCatalogEntry source) => Source = source;
     public NexusCatalogEntry Source { get; }
 
-    /// <summary>Wird vom <see cref="NexusViewModel"/> beim Erzeugen und bei
-    /// Änderungen des Premium-Status gesetzt. Muss auf der Row selbst liegen
-    /// weil ein <c>RelativeSource FindAncestor</c>-Bind vom Button auf
-    /// die ListBox-DataContext-Property in einem FuncDataTemplate in Avalonia
-    /// nicht zuverlässig aufgelöst wird (Binding liefert null → default(bool)
-    /// = false → Button disabled auch für Premium-User).</summary>
+    /// <summary>Muss auf der Row selbst liegen weil RelativeSource
+    /// FindAncestor-Bind vom Button in einem FuncDataTemplate in Avalonia 12
+    /// nicht zuverlaessig aufloest (liefert null → default(bool) = false →
+    /// Button disabled auch fuer Premium-User).</summary>
     [ObservableProperty] private bool _isPremium;
 
     public string Name => Source.Name;
     public string Author => Source.Author;
     public string Summary => Source.Summary;
 
-    /// <summary>Version mit smartem „v"-Prefix — nur wenn String mit Ziffer
-    /// beginnt. Verhindert „vV1.4.0" (Autor hat bereits eigenes v) oder
-    /// „vpatch3" (nicht-SemVer).</summary>
     public string VersionDisplay
     {
         get
@@ -314,8 +328,6 @@ public sealed partial class NexusRow : ObservableObject
 
     public string EndorsementsText => Source.Endorsements > 0 ? $"👍 {Source.Endorsements}" : "";
 
-    /// <summary>„Aktualisiert vor N Tagen" — relative statt absolut damit die
-    /// Meta-Zeile nicht überladen wird.</summary>
     public string UpdatedText
     {
         get
@@ -332,4 +344,5 @@ public sealed partial class NexusRow : ObservableObject
     [ObservableProperty] private Bitmap? _cover;
 }
 
-public sealed record NexusCategoryOption(int? CategoryId, string Name);
+/// <summary>Combobox-Option fuer die Sort-Auswahl im Katalog-Header.</summary>
+public sealed record NexusSortOption(string Label, NexusSort Value);
