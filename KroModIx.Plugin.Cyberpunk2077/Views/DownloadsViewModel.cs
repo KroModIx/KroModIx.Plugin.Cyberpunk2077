@@ -56,7 +56,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         Rows.Clear();
         if (!Directory.Exists(_paths.DownloadsDir))
         {
-            StatusText = "Downloads-Ordner existiert nicht: " + _paths.DownloadsDir;
+            StatusText = Strings.T("status.downloads_dir_missing") + _paths.DownloadsDir;
             return;
         }
         var zips = Directory.EnumerateFiles(_paths.DownloadsDir, "*.zip",
@@ -64,8 +64,8 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         foreach (var p in zips.OrderByDescending(File.GetLastWriteTimeUtc))
             Rows.Add(new DownloadRow(p, new FileInfo(p)));
         StatusText = zips.Count == 0
-            ? $"Keine ZIPs unter {_paths.DownloadsDir} — Nexus-Downloads landen hier."
-            : $"{zips.Count} ZIP(s) bereit zum Install.";
+            ? string.Format(Strings.T("status.no_zips_hint"), _paths.DownloadsDir)
+            : string.Format(Strings.T("status.zips_ready"), zips.Count);
     }
 
     [RelayCommand]
@@ -87,7 +87,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             _host.Logger.Warn(ex, "ZIP-Install Ausnahme: {File}", row.FileName);
-            await _host.Dialogs.ShowMessageAsync("Install-Fehler", ex.Message);
+            await _host.Dialogs.ShowMessageAsync(Strings.T("dialog.install_error_title"), ex.Message);
         }
         finally { IsBusy = false; }
     }
@@ -96,11 +96,12 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     private async Task InstallAllAsync()
     {
         if (Rows.Count == 0) return;
-        var ok = await _host.Dialogs.ConfirmAsync("Alle installieren?",
-            $"{Rows.Count} ZIP(s) werden nacheinander ins Game-Root extrahiert. Fortfahren?",
-            okLabel: "Installieren");
+        var ok = await _host.Dialogs.ConfirmAsync(
+            Strings.T("dialog.install_all_title"),
+            string.Format(Strings.T("dialog.install_all_msg"), Rows.Count),
+            okLabel: Strings.T("dialog.install_all_ok"));
         if (!ok) return;
-        using var scope = _host.BeginProgress($"Installiere {Rows.Count} ZIP(s) …");
+        using var scope = _host.BeginProgress(string.Format(Strings.T("progress.install_zips"), Rows.Count));
         int done = 0, failed = 0;
         foreach (var row in Rows.ToList())
         {
@@ -117,7 +118,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
                 failed++;
             }
         }
-        _host.Notifications.Notify($"{done} installiert, {failed} Fehler.",
+        _host.Notifications.Notify(string.Format(Strings.T("notify.bulk_install_result"), done, failed),
             failed == 0 ? NotificationLevel.Success : NotificationLevel.Warning);
     }
 
@@ -125,16 +126,16 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     private async Task DeleteAsync(DownloadRow? row)
     {
         if (row is null) return;
-        var ok = await _host.Dialogs.ConfirmAsync("ZIP löschen?",
-            $"{row.FileName} wirklich löschen? (Nur die ZIP im Downloads-Ordner, " +
-            $"schon installierte Dateien im Game-Root bleiben.)",
-            okLabel: "Löschen");
+        var ok = await _host.Dialogs.ConfirmAsync(
+            Strings.T("dialog.delete_zip_title"),
+            string.Format(Strings.T("dialog.delete_zip_msg"), row.FileName),
+            okLabel: Strings.T("dialog.delete_zip_ok"));
         if (!ok) return;
         try { File.Delete(row.FullPath); Refresh(); }
         catch (Exception ex)
         {
             _host.Logger.Warn(ex, "ZIP-Delete: {File}", row.FileName);
-            await _host.Dialogs.ShowMessageAsync("Fehler", ex.Message);
+            await _host.Dialogs.ShowMessageAsync(Strings.T("dialog.error_title"), ex.Message);
         }
     }
 }

@@ -121,7 +121,7 @@ public sealed partial class InstalledModsViewModel : ObservableObject
         {
             IsBusy = true;
             _installer.Uninstall(row.Mod);
-            _host.Notifications.Notify($"Deinstalliert: {row.Mod.Name}",
+            _host.Notifications.Notify(Strings.T("notify.uninstalled_prefix") + row.Mod.Name,
                 NotificationLevel.Success);
             Refresh();
         }
@@ -149,7 +149,7 @@ public sealed partial class InstalledModsViewModel : ObservableObject
         var targets = Rows.Where(r => r.Mod.IsEnabled).ToList();
         if (targets.Count == 0)
         {
-            _host.Notifications.Notify("Keine aktiven Mods.", NotificationLevel.Info);
+            _host.Notifications.Notify(Strings.T("notify.no_enabled_mods"), NotificationLevel.Info);
             return;
         }
         var ok = await _host.Dialogs.ConfirmAsync("Alle deaktivieren?",
@@ -170,7 +170,7 @@ public sealed partial class InstalledModsViewModel : ObservableObject
                 failed++;
             }
         }
-        _host.Notifications.Notify($"{done} deaktiviert, {failed} Fehler.",
+        _host.Notifications.Notify(string.Format(Strings.T("notify.bulk_disable_result"), done, failed),
             failed == 0 ? NotificationLevel.Success : NotificationLevel.Warning);
         Refresh();
     }
@@ -182,7 +182,7 @@ public sealed partial class InstalledModsViewModel : ObservableObject
         var targets = Rows.Where(r => !r.Mod.IsEnabled).ToList();
         if (targets.Count == 0)
         {
-            _host.Notifications.Notify("Keine deaktivierten Mods.", NotificationLevel.Info);
+            _host.Notifications.Notify(Strings.T("notify.no_disabled_mods"), NotificationLevel.Info);
             return;
         }
         int done = 0, failed = 0;
@@ -198,7 +198,7 @@ public sealed partial class InstalledModsViewModel : ObservableObject
                 failed++;
             }
         }
-        _host.Notifications.Notify($"{done} aktiviert, {failed} Fehler.",
+        _host.Notifications.Notify(string.Format(Strings.T("notify.bulk_enable_result"), done, failed),
             failed == 0 ? NotificationLevel.Success : NotificationLevel.Warning);
         Refresh();
     }
@@ -213,7 +213,7 @@ public sealed partial class ModRow : ObservableObject
     // Mod ist mutable damit ToggleEnabled ohne Full-Refresh reagiert.
     [ObservableProperty] private CyberpunkMod _mod;
 
-    public string StatusLabel => Mod.IsEnabled ? "aktiv" : "deaktiviert";
+    public string StatusLabel => Mod.IsEnabled ? Strings.T("row.status_active") : Strings.T("row.status_inactive");
     public string SizeText => Mod.SizeBytes switch
     {
         null => "",
@@ -233,7 +233,7 @@ public sealed partial class ModRow : ObservableObject
             return string.Join(" · ", parts);
         }
     }
-    public string ToggleButtonLabel => Mod.IsEnabled ? "⏸  Deaktivieren" : "▶  Aktivieren";
+    public string ToggleButtonLabel => Mod.IsEnabled ? Strings.T("btn.disable") : Strings.T("btn.enable");
 
     /// <summary>Callback aus dem VM nach externem Mod-Change (Toggle) —
     /// triggert PropertyChanged für alle Compute-Properties.</summary>

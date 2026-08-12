@@ -20,9 +20,11 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.7.0",
+        Version: "0.8.0",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert / Nexus-Katalog / Downloads. " +
+            "v0.8: DE+EN-Uebersetzung aller User-facing Strings (Tab-Labels, Buttons, " +
+            "Statusmeldungen, Notifications, Dialoge) ueber Strings.T(). " +
             "v0.7: Voll-Katalog via Nexus-GraphQL (~23000 Cyberpunk-Mods verfuegbar), " +
             "Pagination mit 'Mehr laden'-Button, Server-side Volltextsuche, Sort-Dropdown " +
             "(Neueste Updates / Neu / Endorsements / Downloads). " +
@@ -60,6 +62,9 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         IReadOnlyList<DetectedGame> activatedGames, CancellationToken ct)
     {
         _host = host;
+        // v0.8.0: Uebersetzungen. Muss VOR jedem GetTabContributions/CreateView
+        // aufgerufen werden — die Views lesen Strings.T() im Constructor.
+        Strings.Init(host.Localization);
         _paths = new CyberpunkPathResolver();
         _scanner = new CyberpunkModScanner(_paths);
         _installer = new CyberpunkModInstallService();
@@ -161,7 +166,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         }
 
         public string Id => "installed";
-        public string Label => "Installiert";
+        public string Label => Strings.T("tab.installed");
         public string Icon => "\U0001F4E6"; // 📦
         public int Order => 0;
         public bool IsVisible(DetectedGame game) => true;
@@ -191,7 +196,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         }
 
         public string Id => "nexus";
-        public string Label => "Nexus";
+        public string Label => Strings.T("tab.nexus");
         public string Icon => "\U0001F310"; // 🌐
         public int Order => 10;
         public bool IsVisible(DetectedGame game) => true;
@@ -220,7 +225,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         }
 
         public string Id => "downloads";
-        public string Label => "Downloads";
+        public string Label => Strings.T("tab.downloads");
         public string Icon => "\U0001F4E5"; // 📥
         public int Order => 20;
         public bool IsVisible(DetectedGame game) => true;

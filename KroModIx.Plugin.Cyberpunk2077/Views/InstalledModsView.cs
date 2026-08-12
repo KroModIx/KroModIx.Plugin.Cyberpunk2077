@@ -4,6 +4,7 @@ using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Layout;
 using Avalonia.Media;
+using KroModIx.Plugin.Cyberpunk2077.Services;
 
 namespace KroModIx.Plugin.Cyberpunk2077.Views;
 
@@ -15,18 +16,18 @@ public sealed class InstalledModsView : UserControl
     public InstalledModsView()
     {
         // --- Toolbar ---
-        var refreshBtn = new Button { Content = "🔄  Aktualisieren" };
+        var refreshBtn = new Button { Content = Strings.T("btn.refresh") };
         refreshBtn.Bind(Button.CommandProperty,
             new Binding(nameof(InstalledModsViewModel.RefreshCommand)));
-        var openBtn = new Button { Content = "📂  archive/pc/mod/ öffnen" };
+        var openBtn = new Button { Content = Strings.T("btn.open_archive_mod") };
         openBtn.Classes.Add("ghost");
         openBtn.Bind(Button.CommandProperty,
             new Binding(nameof(InstalledModsViewModel.OpenModsFolderCommand)));
-        var enableAllBtn = new Button { Content = "▶▶  Alle aktivieren" };
+        var enableAllBtn = new Button { Content = Strings.T("btn.enable_all") };
         enableAllBtn.Classes.Add("ghost");
         enableAllBtn.Bind(Button.CommandProperty,
             new Binding(nameof(InstalledModsViewModel.EnableAllCommand)));
-        var disableAllBtn = new Button { Content = "⏸⏸  Alle deaktivieren" };
+        var disableAllBtn = new Button { Content = Strings.T("btn.disable_all") };
         disableAllBtn.Classes.Add("ghost");
         disableAllBtn.Bind(Button.CommandProperty,
             new Binding(nameof(InstalledModsViewModel.DisableAllCommand)));
@@ -46,7 +47,7 @@ public sealed class InstalledModsView : UserControl
 
         var filter = new TextBox
         {
-            PlaceholderText = "🔍 Filter nach Name oder Typ (Archive, REDmod, CET …)",
+            PlaceholderText = Strings.T("placeholder.search_installed"),
             Margin = new Thickness(0, 0, 0, 8),
         };
         filter.Bind(TextBox.TextProperty,
@@ -127,7 +128,7 @@ public sealed class InstalledModsView : UserControl
         toggleBtn.CommandParameter = null;
         toggleBtn.Bind(Button.CommandParameterProperty, new Binding("."));
 
-        var uninstallBtn = new Button { Content = "🗑  Deinstallieren" };
+        var uninstallBtn = new Button { Content = Strings.T("btn.uninstall") };
         uninstallBtn.Classes.Add("danger");
         uninstallBtn.Bind(Button.CommandProperty, new Binding
         {

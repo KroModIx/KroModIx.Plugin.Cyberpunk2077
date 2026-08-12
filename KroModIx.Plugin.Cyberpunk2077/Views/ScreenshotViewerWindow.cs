@@ -39,7 +39,7 @@ public sealed class ScreenshotViewerWindow : Window
         _index = Math.Clamp(startIndex, 0, screenshots.Count - 1);
         _host = host;
 
-        Title = "Screenshot";
+        Title = Strings.T("detail.screenshot_window_title");
         Width = 1200;
         Height = 800;
         MinWidth = 640;
@@ -58,7 +58,7 @@ public sealed class ScreenshotViewerWindow : Window
         };
         _loading = new TextBlock
         {
-            Text = "Lade …",
+            Text = Strings.T("status.image_loading"),
             FontSize = 14,
             Foreground = Brushes.White,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -104,7 +104,7 @@ public sealed class ScreenshotViewerWindow : Window
     {
         var titleBlock = new TextBlock
         {
-            Text = "Screenshot",
+            Text = Strings.T("detail.screenshot_window_title"),
             FontWeight = FontWeight.SemiBold,
             Foreground = Brushes.White,
             VerticalAlignment = VerticalAlignment.Center,
@@ -144,11 +144,11 @@ public sealed class ScreenshotViewerWindow : Window
 
     private Control BuildFooter()
     {
-        var prev = new Button { Content = "◀ Zurück" };
+        var prev = new Button { Content = Strings.T("btn.prev") };
         prev.Click += (_, _) => Move(-1);
-        var next = new Button { Content = "Weiter ▶" };
+        var next = new Button { Content = Strings.T("btn.next") };
         next.Click += (_, _) => Move(+1);
-        var openBrowser = new Button { Content = "↗  Im Browser oeffnen" };
+        var openBrowser = new Button { Content = Strings.T("btn.open_browser") };
         openBrowser.Classes.Add("ghost");
         openBrowser.Click += (_, _) => _host.Shell.OpenExternalUrl(_screenshots[_index].FullUrl);
 
@@ -217,7 +217,7 @@ public sealed class ScreenshotViewerWindow : Window
         {
             _host.Logger.Warn(ex, "Screenshot-Load fehlgeschlagen: {Url}", target);
             await Dispatcher.UIThread.InvokeAsync(() =>
-                _loading.Text = "Ladefehler — Enter zum Retry, Pfeile fuer naechstes Bild.");
+                _loading.Text = Strings.T("status.image_load_error"));
         }
     }
 }

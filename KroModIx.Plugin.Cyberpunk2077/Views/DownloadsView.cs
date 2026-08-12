@@ -4,6 +4,7 @@ using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Layout;
 using Avalonia.Media;
+using KroModIx.Plugin.Cyberpunk2077.Services;
 
 namespace KroModIx.Plugin.Cyberpunk2077.Views;
 
@@ -11,16 +12,16 @@ public sealed class DownloadsView : UserControl
 {
     public DownloadsView()
     {
-        var refreshBtn = new Button { Content = "🔄  Aktualisieren" };
+        var refreshBtn = new Button { Content = Strings.T("btn.refresh") };
         refreshBtn.Bind(Button.CommandProperty,
             new Binding(nameof(DownloadsViewModel.RefreshCommand)));
 
-        var openBtn = new Button { Content = "📂  Downloads-Ordner öffnen" };
+        var openBtn = new Button { Content = Strings.T("btn.open_folder") };
         openBtn.Classes.Add("ghost");
         openBtn.Bind(Button.CommandProperty,
             new Binding(nameof(DownloadsViewModel.OpenDownloadsFolderCommand)));
 
-        var installAllBtn = new Button { Content = "📥  Alle installieren" };
+        var installAllBtn = new Button { Content = Strings.T("btn.install_all") };
         installAllBtn.Classes.Add("accent");
         installAllBtn.Bind(Button.CommandProperty,
             new Binding(nameof(DownloadsViewModel.InstallAllCommand)));
@@ -53,7 +54,7 @@ public sealed class DownloadsView : UserControl
             });
             var metaStack = new StackPanel { Children = { name, infoLine } };
 
-            var installBtn = new Button { Content = "📥  Installieren" };
+            var installBtn = new Button { Content = Strings.T("btn.install") };
             installBtn.Classes.Add("accent");
             installBtn.Bind(Button.CommandProperty, new Binding
             {
@@ -66,7 +67,7 @@ public sealed class DownloadsView : UserControl
             });
             installBtn.Bind(Button.CommandParameterProperty, new Binding("."));
 
-            var deleteBtn = new Button { Content = "🗑" };
+            var deleteBtn = new Button { Content = Strings.T("btn.delete") };
             deleteBtn.Classes.Add("danger");
             deleteBtn.Bind(Button.CommandProperty, new Binding
             {

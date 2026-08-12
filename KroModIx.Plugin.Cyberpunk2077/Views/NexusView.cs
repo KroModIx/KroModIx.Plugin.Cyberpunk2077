@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
+using KroModIx.Plugin.Cyberpunk2077.Services;
 
 namespace KroModIx.Plugin.Cyberpunk2077.Views;
 
@@ -18,14 +19,14 @@ public sealed class NexusView : UserControl
 {
     public NexusView()
     {
-        var refreshBtn = new Button { Content = "🔄  Aktualisieren" };
+        var refreshBtn = new Button { Content = Strings.T("btn.refresh") };
         refreshBtn.Bind(Button.CommandProperty,
             new Binding(nameof(NexusViewModel.LoadFirstPageCommand)));
-        ToolTip.SetTip(refreshBtn, "Katalog neu laden (erste Seite)");
+        ToolTip.SetTip(refreshBtn, Strings.T("tooltip.refresh_catalog"));
 
         var search = new TextBox
         {
-            PlaceholderText = "🔍 Nexus durchsuchen — Enter zum Suchen",
+            PlaceholderText = Strings.T("placeholder.search_nexus"),
             Width = 320,
         };
         search.Bind(TextBox.TextProperty,
@@ -38,7 +39,7 @@ public sealed class NexusView : UserControl
                 vm.SearchCommand.Execute(null);
         };
 
-        var searchBtn = new Button { Content = "🔎  Suchen" };
+        var searchBtn = new Button { Content = Strings.T("btn.search") };
         searchBtn.Classes.Add("accent");
         searchBtn.Bind(Button.CommandProperty,
             new Binding(nameof(NexusViewModel.SearchCommand)));
@@ -50,7 +51,7 @@ public sealed class NexusView : UserControl
             new Binding(nameof(NexusViewModel.SelectedSort)) { Mode = BindingMode.TwoWay });
         sortCombo.ItemTemplate = new FuncDataTemplate<NexusSortOption>((o, _) =>
             o is null ? null : new TextBlock { Text = o.Label }, true);
-        ToolTip.SetTip(sortCombo, "Sortier-Reihenfolge");
+        ToolTip.SetTip(sortCombo, Strings.T("tooltip.sort"));
 
         var toolbar = new StackPanel
         {
@@ -81,7 +82,7 @@ public sealed class NexusView : UserControl
 
         // „Mehr laden"-Button am Ende der Liste. Nur enabled wenn noch nicht
         // alle Mods aus totalCount geladen sind.
-        var loadMoreBtn = new Button { Content = "📚  Mehr laden" };
+        var loadMoreBtn = new Button { Content = Strings.T("btn.load_more") };
         loadMoreBtn.HorizontalAlignment = HorizontalAlignment.Center;
         loadMoreBtn.Margin = new Thickness(0, 12, 0, 12);
         loadMoreBtn.Classes.Add("accent");
@@ -191,7 +192,7 @@ public sealed class NexusView : UserControl
             Children = { title, meta, summary },
         };
 
-        var downloadBtn = new Button { Content = "⬇  Download" };
+        var downloadBtn = new Button { Content = Strings.T("btn.download") };
         downloadBtn.Classes.Add("accent");
         downloadBtn.Bind(Button.CommandProperty, new Binding
         {
@@ -201,9 +202,9 @@ public sealed class NexusView : UserControl
         });
         downloadBtn.Bind(Button.CommandParameterProperty, new Binding("."));
         downloadBtn.Bind(Button.IsEnabledProperty, new Binding(nameof(NexusRow.IsPremium)));
-        ToolTip.SetTip(downloadBtn, "Direct-Download in den Downloads-Ordner (Nexus-Premium noetig)");
+        ToolTip.SetTip(downloadBtn, Strings.T("tooltip.premium_download"));
 
-        var detailBtn = new Button { Content = "🔍  Details" };
+        var detailBtn = new Button { Content = Strings.T("btn.details") };
         detailBtn.Bind(Button.CommandProperty, new Binding
         {
             RelativeSource = new RelativeSource
@@ -212,7 +213,7 @@ public sealed class NexusView : UserControl
         });
         detailBtn.Bind(Button.CommandParameterProperty, new Binding("."));
 
-        var openBtn = new Button { Content = "↗  Nexus öffnen" };
+        var openBtn = new Button { Content = Strings.T("btn.open_nexus") };
         openBtn.Classes.Add("ghost");
         openBtn.Bind(Button.CommandProperty, new Binding
         {

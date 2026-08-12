@@ -42,8 +42,9 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _searchQuery = "";
 
     /// <summary>Ausgewaehlte Sortier-Option. Umschalten triggert einen
-    /// Reset (erste Seite mit neuem Sort laden).</summary>
-    [ObservableProperty] private NexusSortOption _selectedSort = SortOptions[0];
+    /// Reset (erste Seite mit neuem Sort laden). Wird im ctor aus
+    /// <see cref="SortOptions"/>[0] initialisiert.</summary>
+    [ObservableProperty] private NexusSortOption? _selectedSort;
 
     [ObservableProperty] private bool _isPremium;
 
@@ -52,19 +53,24 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         foreach (var row in Rows) row.IsPremium = value;
     }
 
-    partial void OnSelectedSortChanged(NexusSortOption value)
+    partial void OnSelectedSortChanged(NexusSortOption? value)
     {
+        if (value is null) return;
         _ = LoadFirstPageAsync();
     }
 
     public ObservableCollection<NexusRow> Rows { get; } = new();
 
-    public static IReadOnlyList<NexusSortOption> SortOptions { get; } = new[]
+    /// <summary>Nicht statisch — Labels werden per Strings.T() aus der aktuell
+    /// gesetzten Sprache gelesen. Beim Erzeugen einer neuen VM-Instanz
+    /// (also nach Sprachwechsel + Tab-Rebuild) bekommt der User die
+    /// aktualisierten Labels.</summary>
+    public IReadOnlyList<NexusSortOption> SortOptions { get; } = new[]
     {
-        new NexusSortOption("Neueste Updates", NexusSort.LatestUpdate),
-        new NexusSortOption("Neu hinzugefuegt", NexusSort.LatestAdd),
-        new NexusSortOption("Meistgeliked", NexusSort.MostEndorsed),
-        new NexusSortOption("Meistgeladen", NexusSort.MostDownloaded),
+        new NexusSortOption(Strings.T("sort.latest_update"), NexusSort.LatestUpdate),
+        new NexusSortOption(Strings.T("sort.latest_add"), NexusSort.LatestAdd),
+        new NexusSortOption(Strings.T("sort.most_endorsed"), NexusSort.MostEndorsed),
+        new NexusSortOption(Strings.T("sort.most_downloaded"), NexusSort.MostDownloaded),
     };
 
     public bool HasMore => _catalog.HasMore;
@@ -83,6 +89,7 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         _downloadBus = downloadBus;
         _mediaScraper = mediaScraper;
         _host = host;
+        _selectedSort = SortOptions[0];
         IsPremium = _nexus.IsPremium;
         _apiKeyChangedHandler = (_, _) => Dispatcher.UIThread.Post(() =>
         {
@@ -121,10 +128,10 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         var total = _catalog.TotalCount;
         var qHint = string.IsNullOrWhiteSpace(_catalog.CurrentQuery)
             ? ""
-            : $" — Suche '{_catalog.CurrentQuery}'";
+            : string.Format(Strings.T("status.search_hint"), _catalog.CurrentQuery);
         StatusText = total > 0
-            ? $"{loaded} von {total} Mods geladen{qHint}"
-            : $"{loaded} Mods{qHint}";
+            ? string.Format(Strings.T("status.mods_of"), loaded, total) + qHint
+            : string.Format(Strings.T("status.mods_count"), loaded) + qHint;
     }
 
     [RelayCommand]
@@ -132,7 +139,7 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
     {
         if (!_nexus.HasApiKey)
         {
-            StatusText = "Kein Nexus-API-Key im Host-Settings — bitte unter 🌐 Nexus eintragen.";
+            StatusText = Strings.T("status.no_api_key");
             Rows.Clear();
             return;
         }
@@ -140,8 +147,8 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         try
         {
             IsBusy = true;
-            StatusText = "Lade Katalog …";
-            await _catalog.LoadFirstPageAsync(SelectedSort.Value, SearchQuery);
+            StatusText = Strings.T("status.loading_catalog");
+            await _catalog.LoadFirstPageAsync((SelectedSort ?? SortOptions[0]).Value, SearchQuery);
             RebuildRowsFromCatalog();
             _ = LoadCoversAsync(0);
             if (_categoryMap.Count == 0) _ = LoadCategoriesAsync();
@@ -149,7 +156,7 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             _host.Logger.Warn(ex, "Cyberpunk Nexus-Load-First fehlgeschlagen");
-            StatusText = "Fehler: " + ex.Message;
+            StatusText = Strings.T("status.error_prefix") + ex.Message;
         }
         finally
         {
@@ -180,7 +187,7 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             _host.Logger.Warn(ex, "Cyberpunk Nexus-Load-More fehlgeschlagen");
-            StatusText = "Load-More-Fehler: " + ex.Message;
+            StatusText = Strings.T("status.load_more_error") + ex.Message;
         }
         finally
         {
@@ -269,14 +276,13 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         if (row is null) return;
         if (!IsPremium)
         {
-            _host.Notifications.Notify(
-                "Direct-Download braucht Nexus-Premium. Klick \"Nexus öffnen\" für den Browser-Weg.",
+            _host.Notifications.Notify(Strings.T("notify.premium_required"),
                 NotificationLevel.Warning);
             return;
         }
 
         using var scope = _host.BeginProgress($"Nexus: {row.Source.Name}");
-        scope.Report(0, "Download läuft …");
+        scope.Report(0, Strings.T("btn.download_long"));
         try
         {
             var progress = new Progress<double>(f =>
@@ -284,19 +290,21 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
             var target = await _downloader.DownloadPrimaryAsync(row.Source.ModId, progress);
             if (target is null)
             {
-                _host.Notifications.Notify(
-                    "Download fehlgeschlagen — Log-Detail prüfen (Premium-Status? Rate-Limit?).",
+                _host.Notifications.Notify(Strings.T("notify.download_fail_check_log"),
                     NotificationLevel.Error);
                 return;
             }
-            _host.Notifications.Notify($"Heruntergeladen: {Path.GetFileName(target)}",
+            _host.Notifications.Notify(
+                Strings.T("notify.download_ok_prefix") + Path.GetFileName(target),
                 NotificationLevel.Success);
             _downloadBus.RaiseDownloadsChanged(Path.GetFileName(target));
         }
         catch (Exception ex)
         {
             _host.Logger.Warn(ex, "Nexus-Download fehlgeschlagen für mod_id={Id}", row.Source.ModId);
-            _host.Notifications.Notify($"Download-Fehler: {ex.Message}", NotificationLevel.Error);
+            _host.Notifications.Notify(
+                Strings.T("notify.download_error_prefix") + ex.Message,
+                NotificationLevel.Error);
         }
     }
 }

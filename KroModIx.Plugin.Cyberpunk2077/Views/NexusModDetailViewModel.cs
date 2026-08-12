@@ -58,8 +58,8 @@ public sealed partial class NexusModDetailViewModel : ObservableObject
         EndorsementsText = row.EndorsementsText;
         UpdatedText = row.UpdatedText;
         Cover = row.Cover;
-        Description = "Detail-Beschreibung wird geladen …";
-        StatusText = "Detail wird geladen …";
+        Description = Strings.T("detail.desc_placeholder");
+        StatusText = Strings.T("status.detail_loading");
 
         _ = LoadDetailAsync();
         _ = LoadScreenshotsAsync();
@@ -168,8 +168,8 @@ public sealed partial class NexusModDetailViewModel : ObservableObject
             var detail = await _nexus.GetModDetailAsync(_gameSlug, _modId);
             if (detail is null)
             {
-                Description = "Detail konnte nicht geladen werden (API-Fehler oder Rate-Limit).";
-                StatusText = "Fehler beim Laden.";
+                Description = Strings.T("status.detail_load_error");
+                StatusText = Strings.T("status.detail_load_error");
                 return;
             }
 
@@ -188,19 +188,21 @@ public sealed partial class NexusModDetailViewModel : ObservableObject
             Description = HtmlStrip.ToPlainText(detail.DescriptionHtml);
             if (string.IsNullOrWhiteSpace(Description))
                 Description = string.IsNullOrWhiteSpace(detail.Summary)
-                    ? "Keine Beschreibung im Detail-Endpoint."
+                    ? Strings.T("detail.desc_no_content")
                     : detail.Summary;
 
             Category = _categoryMap.TryGetValue(detail.CategoryId, out var name)
                 ? name
-                : (detail.CategoryId > 0 ? $"Kategorie #{detail.CategoryId}" : "");
-            StatusText = $"v{detail.Version} · {(detail.Available ? "verfügbar" : "nicht verfügbar")}";
+                : (detail.CategoryId > 0
+                    ? string.Format(Strings.T("detail.category_unknown"), detail.CategoryId)
+                    : "");
+            StatusText = $"v{detail.Version}";
         }
         catch (Exception ex)
         {
             _host.Logger.Warn(ex, "Nexus-Detail-Load fehlgeschlagen für mod_id={Id}", _modId);
-            Description = $"Fehler: {ex.Message}";
-            StatusText = "Fehler beim Laden.";
+            Description = Strings.T("status.error_prefix") + ex.Message;
+            StatusText = Strings.T("status.detail_load_error");
         }
         finally { IsLoading = false; }
     }
@@ -216,33 +218,34 @@ public sealed partial class NexusModDetailViewModel : ObservableObject
     {
         if (!IsPremium)
         {
-            _host.Notifications.Notify(
-                "Direct-Download braucht Nexus-Premium. Klick \"Auf Nexus öffnen\" für den Browser-Weg.",
+            _host.Notifications.Notify(Strings.T("notify.premium_required_detail"),
                 NotificationLevel.Warning);
             return;
         }
         DownloadBusy = true;
         using var scope = _host.BeginProgress($"Nexus: {Title}");
-        scope.Report(0, "Download läuft …");
+        scope.Report(0, Strings.T("btn.download_long"));
         try
         {
             var progress = new Progress<double>(f => scope.Report(f, $"{Title} · {(int)(f * 100)}%"));
             var target = await _downloader.DownloadPrimaryAsync(_modId, progress);
             if (target is null)
             {
-                _host.Notifications.Notify(
-                    "Nexus verweigert Download-URL — Premium-Status prüfen (Verify im Host-Settings-Tab).",
+                _host.Notifications.Notify(Strings.T("notify.download_no_link"),
                     NotificationLevel.Error);
                 return;
             }
-            _host.Notifications.Notify($"Heruntergeladen: {Path.GetFileName(target)}",
+            _host.Notifications.Notify(
+                Strings.T("notify.download_ok_prefix") + Path.GetFileName(target),
                 NotificationLevel.Success);
             _downloadBus.RaiseDownloadsChanged(Path.GetFileName(target));
         }
         catch (Exception ex)
         {
             _host.Logger.Warn(ex, "Nexus-Detail-Download fehlgeschlagen für mod_id={Id}", _modId);
-            _host.Notifications.Notify($"Download-Fehler: {ex.Message}", NotificationLevel.Error);
+            _host.Notifications.Notify(
+                Strings.T("notify.download_error_prefix") + ex.Message,
+                NotificationLevel.Error);
         }
         finally { DownloadBusy = false; }
     }
@@ -252,13 +255,12 @@ public sealed partial class NexusModDetailViewModel : ObservableObject
     {
         if (IsLoading || string.IsNullOrWhiteSpace(Description))
         {
-            _host.Notifications.Notify("Bitte warten bis Detail geladen ist.", NotificationLevel.Info);
+            _host.Notifications.Notify(Strings.T("notify.detail_wait"), NotificationLevel.Info);
             return;
         }
         if (!await _host.Ai.IsAvailableAsync())
         {
-            _host.Notifications.Notify(
-                "KI-Provider nicht erreichbar — bitte in den KroModIx-Einstellungen konfigurieren.",
+            _host.Notifications.Notify(Strings.T("notify.ai_unavailable"),
                 NotificationLevel.Warning);
             return;
         }
