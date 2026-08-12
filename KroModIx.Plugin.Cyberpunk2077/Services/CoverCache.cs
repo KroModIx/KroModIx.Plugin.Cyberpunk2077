@@ -1,0 +1,118 @@
+using System;
+using System.IO;
+using System.Net.Http;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using KroModIx.Plugin.Contracts;
+using NLog;
+
+namespace KroModIx.Plugin.Cyberpunk2077.Services;
+
+/// <summary>Persistenter Cover-Bild-Cache für Nexus-Mod-Rows im Katalog-
+/// Tab. Cache-Key basiert auf Nexus-<c>mod_id</c> (stabil — Nexus rotiert
+/// keine IDs), Extension aus dem URL (typisch <c>.jpg</c>, gelegentlich
+/// <c>.png</c>). 404 wird als leerer <c>.404</c>-Marker mit 7-Tage-TTL
+/// persistiert damit Recheck nicht bei jedem Refresh die API belastet.
+/// Siehe Skill-Reference <c>cover-cache.md</c>.</summary>
+public sealed class CoverCache
+{
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+    private static readonly TimeSpan NegativeCacheTtl = TimeSpan.FromDays(7);
+    private static readonly Regex ModIdInUrl = new(@"/mods/(?<id>\d+)/", RegexOptions.Compiled);
+
+    private readonly HttpClient _http;
+    private readonly string _dir;
+
+    public CoverCache(HttpClient http, IHostServices host)
+    {
+        _http = http;
+        _dir = Path.Combine(host.PluginCacheDir, "covers");
+        Directory.CreateDirectory(_dir);
+    }
+
+    /// <summary>Kachel-Key: primaer die <c>mod_id</c> aus dem URL (stabil
+    /// egal welche CDN-Region), Fallback SHA1-hex. Im Cache-Dir landen
+    /// die Files als <c>mod_&lt;id&gt;.&lt;ext&gt;</c> — direkt lesbar
+    /// bei <c>ls</c>.</summary>
+    public static string CacheKeyFor(string url)
+    {
+        var m = ModIdInUrl.Match(url);
+        if (m.Success) return $"mod_{m.Groups["id"].Value}";
+        return "sha1_" + System.Security.Cryptography.SHA1
+            .HashData(System.Text.Encoding.UTF8.GetBytes(url))
+            .Aggregate(new System.Text.StringBuilder(), (sb, b) => sb.Append(b.ToString("x2")))
+            .ToString();
+    }
+
+    public string? TryGetCachedPath(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return null;
+        var basePath = Path.Combine(_dir, CacheKeyFor(url));
+        foreach (var ext in new[] { ".jpg", ".jpeg", ".png", ".webp" })
+        {
+            var p = basePath + ext;
+            if (File.Exists(p)) return p;
+        }
+        return null;
+    }
+
+    /// <summary>Lädt das Cover herunter (wenn nicht gecacht) und liefert
+    /// den lokalen Pfad. Bei 404 → leerer .404-Marker, danach 7 Tage kein
+    /// Recheck. Timeout 15 s pro Download — bei Netzausfall skip.</summary>
+    public async Task<string?> GetOrDownloadCoverAsync(string url, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(url)) return null;
+        var cached = TryGetCachedPath(url);
+        if (cached is not null) return cached;
+
+        var basePath = Path.Combine(_dir, CacheKeyFor(url));
+        var marker404 = basePath + ".404";
+        if (File.Exists(marker404))
+        {
+            if (DateTime.UtcNow - File.GetLastWriteTimeUtc(marker404) < NegativeCacheTtl)
+                return null;
+            try { File.Delete(marker404); } catch { }
+        }
+
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            using var resp = await _http.GetAsync(url, timeout.Token);
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                try { File.WriteAllText(marker404, ""); } catch { }
+                return null;
+            }
+            if (!resp.IsSuccessStatusCode)
+            {
+                Log.Debug("Cover HTTP {Code} für {Url}", (int)resp.StatusCode, url);
+                return null;
+            }
+            var bytes = await resp.Content.ReadAsByteArrayAsync(timeout.Token);
+            var ext = GuessExtension(bytes);
+            if (ext is null) return null;
+            var target = basePath + ext;
+            var tmp = target + ".tmp";
+            await File.WriteAllBytesAsync(tmp, bytes, timeout.Token);
+            File.Move(tmp, target, overwrite: true);
+            return target;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Cover-Download fehlgeschlagen: {Url}", url);
+            return null;
+        }
+    }
+
+    private static string? GuessExtension(byte[] b)
+    {
+        if (b.Length < 8) return null;
+        if (b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF) return ".jpg";
+        if (b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47) return ".png";
+        if (b[0] == 0x52 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x46
+            && b[8] == 0x57 && b[9] == 0x45 && b[10] == 0x42 && b[11] == 0x50) return ".webp";
+        return null;
+    }
+}

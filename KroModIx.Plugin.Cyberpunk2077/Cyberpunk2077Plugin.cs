@@ -20,10 +20,11 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.1.0",
+        Version: "0.2.0",
         Author: "Kroste",
-        Description: "Mod-Verwaltung für Cyberpunk 2077. Erkennt Archive-, REDmod-, " +
-            "CET-, RED4ext- und redscript-Mods; Enable/Disable via Rename, Bulk-Aktionen.");
+        Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert-Tab + Nexus-Katalog " +
+            "(v0.2). Erkennt Archive/REDmod/CET/RED4ext/redscript, Enable/Disable via Rename, " +
+            "Bulk-Aktionen. Nexus-API-Key wird zentral im Host-Settings-Fenster verwaltet.");
 
     public IReadOnlyList<GameTarget> Targets { get; } = new[]
     {
@@ -39,6 +40,8 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
     private CyberpunkPathResolver? _paths;
     private CyberpunkModScanner? _scanner;
     private CyberpunkModInstallService? _installer;
+    private CyberpunkNexusCatalog? _catalog;
+    private CoverCache? _covers;
 
     public Task InitializeAsync(IHostServices host,
         IReadOnlyList<DetectedGame> activatedGames, CancellationToken ct)
@@ -47,6 +50,8 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
         _paths = new CyberpunkPathResolver();
         _scanner = new CyberpunkModScanner(_paths);
         _installer = new CyberpunkModInstallService();
+        _catalog = new CyberpunkNexusCatalog(host.Nexus);
+        _covers = new CoverCache(host.CreateHttpClient("cyberpunk-covers"), host);
 
         foreach (var game in activatedGames)
         {
@@ -66,9 +71,11 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
 
     public IEnumerable<IGameTabContribution> GetTabContributions(DetectedGame game)
     {
-        if (_host is null || _paths is null || _scanner is null || _installer is null)
+        if (_host is null || _paths is null || _scanner is null || _installer is null
+            || _catalog is null || _covers is null)
             yield break;
         yield return new InstalledTab(game, _scanner, _installer, _paths, _host);
+        yield return new NexusTab(_catalog, _covers, _host);
     }
 
     public Task ShutdownAsync()
@@ -103,6 +110,29 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
             new InstalledModsView
             {
                 DataContext = new InstalledModsViewModel(_game, _scanner, _installer, _paths, _host),
+            };
+    }
+
+    private sealed class NexusTab : IGameTabContribution
+    {
+        private readonly CyberpunkNexusCatalog _catalog;
+        private readonly CoverCache _covers;
+        private readonly IHostServices _host;
+
+        public NexusTab(CyberpunkNexusCatalog catalog, CoverCache covers, IHostServices host)
+        {
+            _catalog = catalog; _covers = covers; _host = host;
+        }
+
+        public string Id => "nexus";
+        public string Label => "Nexus";
+        public string Icon => "\U0001F310"; // 🌐
+        public int Order => 10;
+        public bool IsVisible(DetectedGame game) => true;
+        public Control CreateView(DetectedGame game, IHostServices host) =>
+            new NexusView
+            {
+                DataContext = new NexusViewModel(_catalog, _covers, _host.Nexus, _host),
             };
     }
 }
