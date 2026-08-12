@@ -15,16 +15,16 @@ namespace KroModIx.Plugin.Cyberpunk2077;
 /// File-/Directory-Delete, Bulk-Aktionen.
 ///
 /// <para>Nexus-Katalog + Update-Discovery kommen in v0.2+ (analog Icarus).</para></summary>
-public sealed class Cyberpunk2077Plugin : IGameModPlugin
+public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
 {
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.2.0",
+        Version: "0.4.0",
         Author: "Kroste",
-        Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert-Tab + Nexus-Katalog " +
-            "(v0.2). Erkennt Archive/REDmod/CET/RED4ext/redscript, Enable/Disable via Rename, " +
-            "Bulk-Aktionen. Nexus-API-Key wird zentral im Host-Settings-Fenster verwaltet.");
+        Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert / Nexus-Katalog / Downloads. " +
+            "v0.4: Update-Discovery für REDmods + grüner ↑-Badge auf der Sidebar-Kachel (IUpdateNotifier). " +
+            "Nutzt Host-Nexus-Baukasten (Contracts v1.14.0), API-Key wird zentral im Host-Settings verwaltet.");
 
     public IReadOnlyList<GameTarget> Targets { get; } = new[]
     {
@@ -45,6 +45,8 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
     private CyberpunkPaths? _pluginPaths;
     private CyberpunkDownloader? _downloader;
     private CyberpunkZipInstaller? _zipInstaller;
+    private CyberpunkUpdateChecker? _updateChecker;
+    private IReadOnlyList<DetectedGame> _activatedGames = Array.Empty<DetectedGame>();
 
     public Task InitializeAsync(IHostServices host,
         IReadOnlyList<DetectedGame> activatedGames, CancellationToken ct)
@@ -59,6 +61,24 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
         _downloader = new CyberpunkDownloader(host.Nexus,
             host.CreateHttpClient("cyberpunk-downloads"), _pluginPaths);
         _zipInstaller = new CyberpunkZipInstaller();
+        _updateChecker = new CyberpunkUpdateChecker(_scanner, _catalog);
+        _activatedGames = activatedGames;
+
+        // v0.4: Auto-Update-Check nach 15s Bootstrap-Delay. Kein Katalog-
+        // Live-Refresh — die 3 Nexus-Endpoints werden im Nexus-Tab manuell
+        // getriggert. Der Check nutzt was der Katalog gerade hat.
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(TimeSpan.FromSeconds(15), ct); }
+            catch { return; }
+            foreach (var g in activatedGames)
+            {
+                if (!_paths.LooksLikeCyberpunkInstall(g)) continue;
+                try { await _updateChecker.CheckAsync(g, ct); }
+                catch (Exception ex) { host.Logger.Debug(ex, "Auto-Update-Check fehlgeschlagen"); }
+            }
+            try { await host.RequestUpdateBadgeRefreshAsync(); } catch { }
+        }, ct);
 
         foreach (var game in activatedGames)
         {
@@ -91,6 +111,25 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
     {
         _host?.Logger.Info("Cyberpunk 2077 shutdown");
         return Task.CompletedTask;
+    }
+
+    // ---- IUpdateNotifier (Contracts v1.7.0+) ----
+
+    public Task<IReadOnlyList<GameUpdateInfo>> GetPendingUpdatesAsync(CancellationToken ct)
+    {
+        if (_updateChecker is null || _activatedGames.Count == 0)
+            return Task.FromResult<IReadOnlyList<GameUpdateInfo>>(Array.Empty<GameUpdateInfo>());
+        var count = _updateChecker.PendingCount;
+        if (count <= 0)
+            return Task.FromResult<IReadOnlyList<GameUpdateInfo>>(Array.Empty<GameUpdateInfo>());
+        var summary = count == 1
+            ? $"1 Mod-Update verfügbar: {_updateChecker.Pending[0].InstalledName}"
+            : $"{count} Mod-Updates verfügbar";
+        var infos = _activatedGames
+            .Where(g => g.Target.SteamAppId is int)
+            .Select(g => new GameUpdateInfo(g.Target.SteamAppId!.Value, count, summary))
+            .ToList();
+        return Task.FromResult<IReadOnlyList<GameUpdateInfo>>(infos);
     }
 
     private sealed class InstalledTab : IGameTabContribution
