@@ -30,6 +30,12 @@ namespace KroModIx.Plugin.Cyberpunk2077.Services;
 public sealed class CyberpunkZipInstaller
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+    private readonly InstallManifestStore? _manifests;
+
+    public CyberpunkZipInstaller(InstallManifestStore? manifests = null)
+    {
+        _manifests = manifests;
+    }
 
     private static readonly string[] KnownRoots = new[]
     {
@@ -78,6 +84,7 @@ public sealed class CyberpunkZipInstaller
             if (knownLayout)
             {
                 var installed = ExtractDirect(entries, installDir);
+                WriteManifests(installed, installDir, archivePath);
                 return new ZipInstallResult(true,
                     $"Direkt-Layout erkannt — {installed.Count} Datei(en) ins Game-Root extrahiert.",
                     installed);
@@ -102,6 +109,7 @@ public sealed class CyberpunkZipInstaller
                     ExtractOne(e, dst);
                     installed.Add(dst);
                 }
+                WriteManifests(installed, installDir, archivePath);
                 return new ZipInstallResult(true,
                     $"Flat-Layout: {installed.Count} .archive-Datei(en) nach archive/pc/mod/ extrahiert.",
                     installed);
@@ -144,6 +152,89 @@ public sealed class CyberpunkZipInstaller
         using var input = entry.OpenEntryStream();
         using var output = File.Create(destination);
         input.CopyTo(output);
+    }
+
+    /// <summary>Fuer jeden installierten Mod-Bestandteil ein Manifest im
+    /// <see cref="InstallManifestStore"/> schreiben. Nexus-ModId wird aus
+    /// dem Archive-Filename per <see cref="NexusFileNameParser"/> gelesen —
+    /// wenn der User manuell reinkopierte Archive installiert, bleibt sie
+    /// null (dann kein Enrichment im Installiert-Tab, kein Details-Button).</summary>
+    private void WriteManifests(IReadOnlyList<string> installedPaths, string installDir, string archivePath)
+    {
+        if (_manifests is null) return;
+        var archiveName = Path.GetFileName(archivePath);
+        var nexusModId = NexusFileNameParser.TryExtractModId(archiveName);
+        var relPaths = installedPaths
+            .Select(p => Path.GetRelativePath(installDir, p).Replace('\\', '/'))
+            .ToList();
+
+        // Aus den relativen Pfaden die (Type, Name)-Paare ableiten — pro
+        // Mod eine Manifest-Datei. Ein Archiv kann mehrere Mods enthalten
+        // (mehrere .archive-Files oder mehrere REDmod-Ordner).
+        var seenKeys = new HashSet<string>();
+        foreach (var rel in relPaths)
+        {
+            var (type, name) = ClassifyPath(rel);
+            if (type is null || string.IsNullOrEmpty(name)) continue;
+            var key = InstallManifestStore.BuildKey(type.Value, name);
+            if (!seenKeys.Add(key)) continue;
+            _manifests.Save(key, new InstallManifest(
+                NexusModId: nexusModId,
+                OriginalFilename: archiveName,
+                InstalledAtUtc: DateTime.UtcNow,
+                InstalledPaths: relPaths));
+        }
+    }
+
+    /// <summary>Aus einem relativen Install-Pfad den (Mod-Typ, Mod-Name)
+    /// ableiten — deckungsgleich mit der Scan-Logik in
+    /// <see cref="CyberpunkModScanner"/>.</summary>
+    private static (CyberpunkModType? Type, string? Name) ClassifyPath(string relPath)
+    {
+        // Normalize
+        var p = relPath.Replace('\\', '/').TrimStart('/');
+        var segments = p.Split('/');
+
+        // archive/pc/mod/<name>.archive
+        if (segments.Length >= 4
+            && segments[0].Equals("archive", StringComparison.OrdinalIgnoreCase)
+            && segments[1].Equals("pc", StringComparison.OrdinalIgnoreCase)
+            && segments[2].Equals("mod", StringComparison.OrdinalIgnoreCase)
+            && segments[3].EndsWith(".archive", StringComparison.OrdinalIgnoreCase))
+        {
+            return (CyberpunkModType.Archive, segments[3][..^".archive".Length]);
+        }
+        // mods/<name>/… (REDmod)
+        if (segments.Length >= 2 && segments[0].Equals("mods", StringComparison.OrdinalIgnoreCase))
+        {
+            return (CyberpunkModType.RedMod, segments[1]);
+        }
+        // bin/x64/plugins/cyber_engine_tweaks/mods/<name>/…
+        if (segments.Length >= 6
+            && segments[0].Equals("bin", StringComparison.OrdinalIgnoreCase)
+            && segments[3].Equals("cyber_engine_tweaks", StringComparison.OrdinalIgnoreCase)
+            && segments[4].Equals("mods", StringComparison.OrdinalIgnoreCase))
+        {
+            return (CyberpunkModType.CyberEngineTweaks, segments[5]);
+        }
+        // red4ext/plugins/<name>/…
+        if (segments.Length >= 3
+            && segments[0].Equals("red4ext", StringComparison.OrdinalIgnoreCase)
+            && segments[1].Equals("plugins", StringComparison.OrdinalIgnoreCase))
+        {
+            return (CyberpunkModType.Red4Ext, segments[2]);
+        }
+        // r6/scripts/<name>/… oder r6/scripts/<name>.reds
+        if (segments.Length >= 3
+            && segments[0].Equals("r6", StringComparison.OrdinalIgnoreCase)
+            && segments[1].Equals("scripts", StringComparison.OrdinalIgnoreCase))
+        {
+            var last = segments[2];
+            if (last.EndsWith(".reds", StringComparison.OrdinalIgnoreCase))
+                return (CyberpunkModType.Redscript, last[..^".reds".Length]);
+            return (CyberpunkModType.Redscript, last);
+        }
+        return (null, null);
     }
 }
 

@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -24,6 +27,12 @@ public sealed partial class InstalledModsViewModel : ObservableObject
     private readonly CyberpunkModScanner _scanner;
     private readonly CyberpunkModInstallService _installer;
     private readonly CyberpunkPathResolver _paths;
+    private readonly INexusService _nexus;
+    private readonly CyberpunkDownloader _downloader;
+    private readonly DownloadEventBus _downloadBus;
+    private readonly NexusMediaScraper _mediaScraper;
+    private readonly CoverCache _covers;
+    private readonly InstallManifestStore _manifests;
     private readonly IHostServices _host;
 
     [ObservableProperty] private string _statusText = "";
@@ -35,12 +44,21 @@ public sealed partial class InstalledModsViewModel : ObservableObject
 
     public InstalledModsViewModel(DetectedGame game, CyberpunkModScanner scanner,
         CyberpunkModInstallService installer, CyberpunkPathResolver paths,
+        INexusService nexus, CyberpunkDownloader downloader,
+        DownloadEventBus downloadBus, NexusMediaScraper mediaScraper,
+        CoverCache covers, InstallManifestStore manifests,
         IHostServices host)
     {
         _game = game;
         _scanner = scanner;
         _installer = installer;
         _paths = paths;
+        _nexus = nexus;
+        _downloader = downloader;
+        _downloadBus = downloadBus;
+        _mediaScraper = mediaScraper;
+        _covers = covers;
+        _manifests = manifests;
         _host = host;
         Refresh();
     }
@@ -81,8 +99,96 @@ public sealed partial class InstalledModsViewModel : ObservableObject
                     byType.OrderBy(kv => kv.Key).Select(kv =>
                         $"{kv.Value}× {kv.Key}"));
             ApplyFilter();
+            // Async: Nexus-Enrichment (Cover + Meta) fuer alle Rows mit
+            // NexusModId aus dem Install-Manifest.
+            _ = EnrichRowsAsync(_allRows.ToArray());
         }
         finally { IsBusy = false; }
+    }
+
+    /// <summary>Fuer alle Rows mit erkannter <see cref="CyberpunkMod.NexusModId"/>
+    /// (aus dem InstallManifest) Nexus-Detail-Fetch + Cover-Load. 250 ms
+    /// Throttling zwischen Requests analog Downloads-Tab.</summary>
+    private async Task EnrichRowsAsync(ModRow[] rows)
+    {
+        if (!_nexus.HasApiKey) return;
+        foreach (var row in rows)
+        {
+            if (row.Mod.NexusModId is not int modId) continue;
+            try
+            {
+                var detail = await _nexus.GetModDetailAsync(CyberpunkNexusCatalog.GameSlug, modId);
+                if (detail is null) continue;
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    row.NexusAuthor = detail.Author;
+                    row.NexusSummary = detail.Summary;
+                    row.NexusVersion = detail.Version;
+                    row.OnEnrichmentChanged();
+                });
+                if (!string.IsNullOrEmpty(detail.PictureUrl))
+                    await LoadCoverAsync(row, detail.PictureUrl);
+            }
+            catch (Exception ex)
+            {
+                _host.Logger.Debug(ex, "Installiert-Enrichment fehlgeschlagen fuer mod_id={Id}", modId);
+            }
+            await Task.Delay(250);
+        }
+    }
+
+    private async Task LoadCoverAsync(ModRow row, string pictureUrl)
+    {
+        var path = await _covers.GetOrDownloadCoverAsync(pictureUrl);
+        if (path is null) return;
+        try
+        {
+            var bmp = await Task.Run(() =>
+            {
+                using var s = File.OpenRead(path);
+                return new Bitmap(s);
+            });
+            await Dispatcher.UIThread.InvokeAsync(() => row.Cover = bmp);
+        }
+        catch (Exception ex)
+        {
+            _host.Logger.Debug(ex, "Installiert-Cover-Load fehlgeschlagen fuer mod_id={Id}", row.Mod.NexusModId);
+        }
+    }
+
+    /// <summary>Oeffnet den Nexus-Mod-Detail-Dialog fuer die Row. Nur moeglich
+    /// wenn ein Install-Manifest existiert (row.Mod.NexusModId != null).</summary>
+    [RelayCommand]
+    private void ShowDetail(ModRow? row)
+    {
+        if (row is null) return;
+        if (row.Mod.NexusModId is not int modId)
+        {
+            _host.Notifications.Notify(
+                string.Format(Strings.T("notify.no_nexus_id"), row.Mod.Name),
+                NotificationLevel.Info);
+            return;
+        }
+        var fakeEntry = new NexusCatalogEntry(
+            ModId: modId,
+            Name: row.Mod.Name,
+            Author: row.NexusAuthor ?? row.Mod.Author ?? "",
+            Summary: row.NexusSummary ?? row.Mod.Description ?? "",
+            Category: "",
+            Version: row.NexusVersion ?? row.Mod.Version ?? "",
+            PictureUrl: "",
+            UpdatedUtc: DateTime.UtcNow,
+            Downloads: 0,
+            Endorsements: 0,
+            Available: true);
+        var fakeRow = new NexusRow(fakeEntry) { IsPremium = _nexus.IsPremium, Cover = row.Cover };
+        var vm = new NexusModDetailViewModel(fakeRow, _nexus.IsPremium,
+            _nexus, _downloader, _downloadBus, _mediaScraper, _covers,
+            new Dictionary<int, string>(), _host);
+        var window = new NexusModDetailWindow { DataContext = vm };
+        var owner = (Avalonia.Application.Current?.ApplicationLifetime
+            as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+        if (owner is not null) window.Show(owner); else window.Show();
     }
 
     [RelayCommand]
@@ -121,6 +227,11 @@ public sealed partial class InstalledModsViewModel : ObservableObject
         {
             IsBusy = true;
             _installer.Uninstall(row.Mod);
+            // v0.9.0: Manifest auch loeschen — sonst bleibt ein orphan
+            // NexusModId-Eintrag, der beim naechsten Install desselben Mods
+            // versehentlich einen fremden Nexus-Mod als „passend" markieren
+            // koennte.
+            _manifests.Delete(row.Mod.ManifestKey);
             _host.Notifications.Notify(Strings.T("notify.uninstalled_prefix") + row.Mod.Name,
                 NotificationLevel.Success);
             Refresh();
@@ -227,13 +338,33 @@ public sealed partial class ModRow : ObservableObject
         get
         {
             var parts = new List<string> { Mod.TypeLabel };
-            if (!string.IsNullOrEmpty(Mod.Version)) parts.Add($"v{Mod.Version}");
-            if (!string.IsNullOrEmpty(Mod.Author)) parts.Add(Mod.Author);
+            var v = NexusVersion ?? Mod.Version;
+            if (!string.IsNullOrEmpty(v)) parts.Add(char.IsDigit(v[0]) ? "v" + v : v);
+            var a = NexusAuthor ?? Mod.Author;
+            if (!string.IsNullOrEmpty(a)) parts.Add(a);
             if (!string.IsNullOrEmpty(SizeText)) parts.Add(SizeText);
             return string.Join(" · ", parts);
         }
     }
     public string ToggleButtonLabel => Mod.IsEnabled ? Strings.T("btn.disable") : Strings.T("btn.enable");
+
+    /// <summary>Nexus-Enrichment-Werte (async vom VM gefuellt wenn eine
+    /// NexusModId im Install-Manifest steht). Ueberschreiben SubtitleText
+    /// wenn vorhanden (Nexus-Author + Nexus-Version sind aktueller/besser
+    /// als Manifest/info.json-Daten).</summary>
+    public string? NexusAuthor { get; set; }
+    public string? NexusSummary { get; set; }
+    public string? NexusVersion { get; set; }
+
+    /// <summary>Cover vom Nexus-CDN (async geladen). null → View zeigt
+    /// den Typ-Icon-Fallback.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasCover))]
+    private Bitmap? _cover;
+
+    public bool HasCover => Cover is not null;
+    public bool HasNexusMatch => Mod.NexusModId is not null;
+    public bool HasSummary => !string.IsNullOrWhiteSpace(NexusSummary);
 
     /// <summary>Callback aus dem VM nach externem Mod-Change (Toggle) —
     /// triggert PropertyChanged für alle Compute-Properties.</summary>
@@ -242,5 +373,14 @@ public sealed partial class ModRow : ObservableObject
         OnPropertyChanged(nameof(StatusLabel));
         OnPropertyChanged(nameof(SubtitleText));
         OnPropertyChanged(nameof(ToggleButtonLabel));
+    }
+
+    /// <summary>Callback nach Nexus-Enrichment — triggert SubtitleText +
+    /// HasSummary neu.</summary>
+    public void OnEnrichmentChanged()
+    {
+        OnPropertyChanged(nameof(SubtitleText));
+        OnPropertyChanged(nameof(NexusSummary));
+        OnPropertyChanged(nameof(HasSummary));
     }
 }

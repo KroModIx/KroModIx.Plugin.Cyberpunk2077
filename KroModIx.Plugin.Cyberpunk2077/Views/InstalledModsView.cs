@@ -87,25 +87,36 @@ public sealed class InstalledModsView : UserControl
 
     private static Control BuildRowCard()
     {
-        // Typ-Icon-Frame 60x60 (📦/⚙/… je Mod-Type) — konsistent mit dem
-        // Kroste-Card-Look aus dem Downloads-Tab. Kein Nexus-Cover moeglich
-        // bei installierten Mods (nach Install ist der Nexus-Filename-Kontext
-        // weg — kein persistierter Install-Manifest im Cyberpunk-Plugin).
-        var iconFrame = new Border
+        // Cover-Frame 140x90 (analog Nexus-Katalog + Downloads-Tab). Bei
+        // Mods ohne NexusMatch (kein Install-Manifest, z.B. vor v0.9.0
+        // installiert oder Filename ohne Nexus-Muster): Typ-Icon-Fallback.
+        var coverFrame = new Border
         {
-            Width = 60, Height = 60,
+            Width = 140, Height = 90,
             CornerRadius = new CornerRadius(6),
+            ClipToBounds = true,
             [!Border.BackgroundProperty] = new DynamicResourceExtension("KrosteSurfaceBrush"),
             VerticalAlignment = VerticalAlignment.Center,
         };
+        var coverPanel = new Panel();
         var typeIcon = new TextBlock
         {
-            FontSize = 28,
+            FontSize = 40,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        typeIcon.Classes.Add("muted");
         typeIcon.Bind(TextBlock.TextProperty, new Binding("Mod.TypeIcon"));
-        iconFrame.Child = typeIcon;
+        coverPanel.Children.Add(typeIcon);
+        var coverImage = new Image
+        {
+            Stretch = Stretch.UniformToFill,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        coverImage.Bind(Image.SourceProperty, new Binding(nameof(ModRow.Cover)));
+        coverPanel.Children.Add(coverImage);
+        coverFrame.Child = coverPanel;
 
         var name = new TextBlock
         {
@@ -117,6 +128,16 @@ public sealed class InstalledModsView : UserControl
         var subtitle = new TextBlock { FontSize = 11 };
         subtitle.Classes.Add("muted");
         subtitle.Bind(TextBlock.TextProperty, new Binding(nameof(ModRow.SubtitleText)));
+
+        // Nexus-Summary, wenn Enrichment gefunden hat
+        var summary = new TextBlock
+        {
+            FontSize = 11, TextWrapping = TextWrapping.Wrap, MaxHeight = 40,
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+        summary.Classes.Add("secondary");
+        summary.Bind(TextBlock.TextProperty, new Binding(nameof(ModRow.NexusSummary)));
+        summary.Bind(TextBlock.IsVisibleProperty, new Binding(nameof(ModRow.HasSummary)));
 
         var status = new TextBlock
         {
@@ -132,12 +153,17 @@ public sealed class InstalledModsView : UserControl
             Spacing = 2,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(14, 0, 0, 0),
-            Children = { name, subtitle, status },
+            Children = { name, subtitle, summary, status },
         };
 
         var toggleBtn = new Button();
         toggleBtn.Bind(Button.ContentProperty, new Binding(nameof(ModRow.ToggleButtonLabel)));
         BindRowCommand(toggleBtn, nameof(InstalledModsViewModel.ToggleEnabledCommand));
+
+        // Details-Button — nur enabled wenn NexusModId aus Manifest da ist.
+        var detailBtn = new Button { Content = Strings.T("btn.details") };
+        BindRowCommand(detailBtn, nameof(InstalledModsViewModel.ShowDetailCommand));
+        detailBtn.Bind(Button.IsEnabledProperty, new Binding(nameof(ModRow.HasNexusMatch)));
 
         var uninstallBtn = new Button { Content = Strings.T("btn.uninstall") };
         uninstallBtn.Classes.Add("danger");
@@ -145,9 +171,9 @@ public sealed class InstalledModsView : UserControl
 
         var actions = new StackPanel
         {
-            Orientation = Orientation.Horizontal, Spacing = 6,
+            Spacing = 6,
             VerticalAlignment = VerticalAlignment.Center,
-            Children = { toggleBtn, uninstallBtn },
+            Children = { toggleBtn, detailBtn, uninstallBtn },
         };
 
         var grid = new Grid
@@ -155,10 +181,10 @@ public sealed class InstalledModsView : UserControl
             ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
             Margin = new Thickness(12, 8),
         };
-        Grid.SetColumn(iconFrame, 0);
+        Grid.SetColumn(coverFrame, 0);
         Grid.SetColumn(titleColumn, 1);
         Grid.SetColumn(actions, 2);
-        grid.Children.Add(iconFrame);
+        grid.Children.Add(coverFrame);
         grid.Children.Add(titleColumn);
         grid.Children.Add(actions);
 

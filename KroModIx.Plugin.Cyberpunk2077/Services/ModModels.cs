@@ -33,8 +33,16 @@ public sealed record CyberpunkMod(
     string? Version = null,
     string? Author = null,
     string? Description = null,
-    long? SizeBytes = null)
+    long? SizeBytes = null,
+    int? NexusModId = null)
 {
+    /// <summary>Stabiler Manifest-Key ({Type}_{Name}) fuer den
+    /// <see cref="InstallManifestStore"/>-Lookup. Enthaelt nicht das
+    /// <c>.disabled</c>-Suffix (Name ist bereits bereinigt).</summary>
+    public string ManifestKey => InstallManifestStore.BuildKey(Type, Name);
+
+    public bool HasNexusMatch => NexusModId is not null;
+
     /// <summary>Human-friendly Type-Label für die UI (z. B. „Archive", „REDmod").</summary>
     public string TypeLabel => Type switch
     {

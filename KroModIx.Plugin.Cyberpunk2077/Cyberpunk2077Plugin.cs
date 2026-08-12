@@ -20,7 +20,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.8.4",
+        Version: "0.9.0",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert / Nexus-Katalog / Downloads. " +
             "v0.8: DE+EN-Uebersetzung aller User-facing Strings (Tab-Labels, Buttons, " +
@@ -56,6 +56,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     private CyberpunkUpdateChecker? _updateChecker;
     private DownloadEventBus? _downloadBus;
     private NexusMediaScraper? _mediaScraper;
+    private InstallManifestStore? _manifests;
     private IReadOnlyList<DetectedGame> _activatedGames = Array.Empty<DetectedGame>();
 
     public Task InitializeAsync(IHostServices host,
@@ -66,14 +67,17 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         // aufgerufen werden — die Views lesen Strings.T() im Constructor.
         Strings.Init(host.Localization);
         _paths = new CyberpunkPathResolver();
-        _scanner = new CyberpunkModScanner(_paths);
+        // v0.9.0: InstallManifestStore VOR Scanner + Installer weil beide
+        // ihn injiziert bekommen.
+        _manifests = new InstallManifestStore(host);
+        _scanner = new CyberpunkModScanner(_paths, _manifests);
         _installer = new CyberpunkModInstallService();
         _catalog = new CyberpunkNexusCatalog(host.Nexus);
         _covers = new CoverCache(host.CreateHttpClient("cyberpunk-covers"), host);
         _pluginPaths = new CyberpunkPaths(host);
         _downloader = new CyberpunkDownloader(host.Nexus,
             host.CreateHttpClient("cyberpunk-downloads"), _pluginPaths);
-        _zipInstaller = new CyberpunkZipInstaller();
+        _zipInstaller = new CyberpunkZipInstaller(_manifests);
         _updateChecker = new CyberpunkUpdateChecker(_scanner, _catalog);
         _downloadBus = new DownloadEventBus();
         _mediaScraper = new NexusMediaScraper(host.CreateHttpClient("cyberpunk-nexus-scrape"));
@@ -116,9 +120,11 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         if (_host is null || _paths is null || _scanner is null || _installer is null
             || _catalog is null || _covers is null || _pluginPaths is null
             || _downloader is null || _zipInstaller is null || _downloadBus is null
-            || _mediaScraper is null)
+            || _mediaScraper is null || _manifests is null)
             yield break;
-        yield return new InstalledTab(game, _scanner, _installer, _paths, _host);
+        yield return new InstalledTab(game, _scanner, _installer, _paths,
+            _host.Nexus, _downloader, _downloadBus, _mediaScraper, _covers,
+            _manifests, _host);
         yield return new NexusTab(_catalog, _covers, _downloader, _downloadBus,
             _mediaScraper, _host);
         yield return new DownloadsTab(game, _pluginPaths, _zipInstaller, _downloadBus,
@@ -156,14 +162,25 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         private readonly CyberpunkModScanner _scanner;
         private readonly CyberpunkModInstallService _installer;
         private readonly CyberpunkPathResolver _paths;
+        private readonly INexusService _nexus;
+        private readonly CyberpunkDownloader _downloader;
+        private readonly DownloadEventBus _downloadBus;
+        private readonly NexusMediaScraper _mediaScraper;
+        private readonly CoverCache _covers;
+        private readonly InstallManifestStore _manifests;
         private readonly IHostServices _host;
 
         public InstalledTab(DetectedGame game, CyberpunkModScanner scanner,
             CyberpunkModInstallService installer, CyberpunkPathResolver paths,
+            INexusService nexus, CyberpunkDownloader downloader,
+            DownloadEventBus downloadBus, NexusMediaScraper mediaScraper,
+            CoverCache covers, InstallManifestStore manifests,
             IHostServices host)
         {
             _game = game; _scanner = scanner; _installer = installer;
-            _paths = paths; _host = host;
+            _paths = paths; _nexus = nexus; _downloader = downloader;
+            _downloadBus = downloadBus; _mediaScraper = mediaScraper;
+            _covers = covers; _manifests = manifests; _host = host;
         }
 
         public string Id => "installed";
@@ -175,7 +192,9 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         public Control CreateView(DetectedGame game, IHostServices host) =>
             new InstalledModsView
             {
-                DataContext = new InstalledModsViewModel(_game, _scanner, _installer, _paths, _host),
+                DataContext = new InstalledModsViewModel(_game, _scanner, _installer,
+                    _paths, _nexus, _downloader, _downloadBus, _mediaScraper,
+                    _covers, _manifests, _host),
             };
     }
 

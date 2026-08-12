@@ -22,14 +22,17 @@ public sealed class CyberpunkModScanner
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly CyberpunkPathResolver _paths;
+    private readonly InstallManifestStore? _manifests;
 
-    public CyberpunkModScanner(CyberpunkPathResolver paths)
+    public CyberpunkModScanner(CyberpunkPathResolver paths, InstallManifestStore? manifests = null)
     {
         _paths = paths;
+        _manifests = manifests;
     }
 
-    /// <summary>Alle Mod-Typen in einem Rutsch scannen. Fehler pro Typ
-    /// werden geloggt aber die anderen laufen weiter.</summary>
+    /// <summary>Alle Mod-Typen in einem Rutsch scannen + optional per
+    /// InstallManifest-Store mit Nexus-Match-Kontext anreichern (NexusModId).
+    /// Fehler pro Typ werden geloggt aber die anderen laufen weiter.</summary>
     public IReadOnlyList<CyberpunkMod> ScanAll(DetectedGame game)
     {
         var mods = new List<CyberpunkMod>();
@@ -38,6 +41,18 @@ public sealed class CyberpunkModScanner
         SafeScan("cet", () => mods.AddRange(ScanCetMods(game)));
         SafeScan("red4ext", () => mods.AddRange(ScanRed4ExtMods(game)));
         SafeScan("redscript", () => mods.AddRange(ScanRedscriptMods(game)));
+        // Manifest-Enrichment: pro Mod nachschauen ob NexusModId persistiert
+        // ist (beim Install via CyberpunkZipInstaller geschrieben).
+        if (_manifests is not null)
+        {
+            for (int i = 0; i < mods.Count; i++)
+            {
+                var m = mods[i];
+                var manifest = _manifests.TryGet(m.ManifestKey);
+                if (manifest?.NexusModId is int id)
+                    mods[i] = m with { NexusModId = id };
+            }
+        }
         return mods
             .OrderBy(m => m.Type)
             .ThenBy(m => m.Name, StringComparer.CurrentCultureIgnoreCase)
