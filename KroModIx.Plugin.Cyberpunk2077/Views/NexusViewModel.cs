@@ -25,6 +25,7 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
     private readonly INexusService _nexus;
     private readonly CyberpunkDownloader _downloader;
     private readonly DownloadEventBus _downloadBus;
+    private readonly NexusMediaScraper _mediaScraper;
     private readonly IHostServices _host;
     private readonly EventHandler _apiKeyChangedHandler;
 
@@ -51,13 +52,15 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
 
     public NexusViewModel(CyberpunkNexusCatalog catalog, CoverCache covers,
         INexusService nexus, CyberpunkDownloader downloader,
-        DownloadEventBus downloadBus, IHostServices host)
+        DownloadEventBus downloadBus, NexusMediaScraper mediaScraper,
+        IHostServices host)
     {
         _catalog = catalog;
         _covers = covers;
         _nexus = nexus;
         _downloader = downloader;
         _downloadBus = downloadBus;
+        _mediaScraper = mediaScraper;
         _host = host;
         IsPremium = _nexus.IsPremium;
         // Bei Key-Change (User trägt neuen im Host-Settings ein) → Refresh
@@ -206,7 +209,8 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
     {
         if (row is null) return;
         var vm = new NexusModDetailViewModel(row, IsPremium,
-            _nexus, _downloader, _downloadBus, _categoryMap, _host);
+            _nexus, _downloader, _downloadBus, _mediaScraper, _covers,
+            _categoryMap, _host);
         var window = new NexusModDetailWindow { DataContext = vm };
         var owner = (Avalonia.Application.Current?.ApplicationLifetime
             as IClassicDesktopStyleApplicationLifetime)?.MainWindow;

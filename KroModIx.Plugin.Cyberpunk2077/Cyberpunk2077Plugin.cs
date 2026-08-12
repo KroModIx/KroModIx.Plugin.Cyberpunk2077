@@ -20,9 +20,11 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.5.0",
+        Version: "0.6.0",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert / Nexus-Katalog / Downloads. " +
+            "v0.6: Screenshot-Galerie im Detail-Dialog (aus Nexus-Media-Tab gescraped) + " +
+            "Fullscreen-Viewer mit Pfeil-Navigation. " +
             "v0.5: Nexus-Detail-Dialog mit voller Beschreibung + KI-Zusammenfassung, " +
             "Premium-Direct-Download aus Katalog & Detail, Adult-Warning-Badge, Auto-Refresh " +
             "des Downloads-Tabs nach Direct-Download. " +
@@ -50,6 +52,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     private CyberpunkZipInstaller? _zipInstaller;
     private CyberpunkUpdateChecker? _updateChecker;
     private DownloadEventBus? _downloadBus;
+    private NexusMediaScraper? _mediaScraper;
     private IReadOnlyList<DetectedGame> _activatedGames = Array.Empty<DetectedGame>();
 
     public Task InitializeAsync(IHostServices host,
@@ -67,6 +70,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         _zipInstaller = new CyberpunkZipInstaller();
         _updateChecker = new CyberpunkUpdateChecker(_scanner, _catalog);
         _downloadBus = new DownloadEventBus();
+        _mediaScraper = new NexusMediaScraper(host.CreateHttpClient("cyberpunk-nexus-scrape"));
         _activatedGames = activatedGames;
 
         // v0.4: Auto-Update-Check nach 15s Bootstrap-Delay. Kein Katalog-
@@ -105,10 +109,12 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     {
         if (_host is null || _paths is null || _scanner is null || _installer is null
             || _catalog is null || _covers is null || _pluginPaths is null
-            || _downloader is null || _zipInstaller is null || _downloadBus is null)
+            || _downloader is null || _zipInstaller is null || _downloadBus is null
+            || _mediaScraper is null)
             yield break;
         yield return new InstalledTab(game, _scanner, _installer, _paths, _host);
-        yield return new NexusTab(_catalog, _covers, _downloader, _downloadBus, _host);
+        yield return new NexusTab(_catalog, _covers, _downloader, _downloadBus,
+            _mediaScraper, _host);
         yield return new DownloadsTab(game, _pluginPaths, _zipInstaller, _downloadBus, _host);
     }
 
@@ -172,14 +178,15 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         private readonly CoverCache _covers;
         private readonly CyberpunkDownloader _downloader;
         private readonly DownloadEventBus _downloadBus;
+        private readonly NexusMediaScraper _mediaScraper;
         private readonly IHostServices _host;
 
         public NexusTab(CyberpunkNexusCatalog catalog, CoverCache covers,
             CyberpunkDownloader downloader, DownloadEventBus downloadBus,
-            IHostServices host)
+            NexusMediaScraper mediaScraper, IHostServices host)
         {
             _catalog = catalog; _covers = covers; _downloader = downloader;
-            _downloadBus = downloadBus; _host = host;
+            _downloadBus = downloadBus; _mediaScraper = mediaScraper; _host = host;
         }
 
         public string Id => "nexus";
@@ -191,7 +198,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
             new NexusView
             {
                 DataContext = new NexusViewModel(_catalog, _covers, _host.Nexus,
-                    _downloader, _downloadBus, _host),
+                    _downloader, _downloadBus, _mediaScraper, _host),
             };
     }
 

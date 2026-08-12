@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Threading.Tasks;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using KroModIx.Plugin.Contracts;
@@ -24,12 +27,16 @@ public sealed partial class NexusModDetailViewModel : ObservableObject
     private readonly INexusService _nexus;
     private readonly CyberpunkDownloader _downloader;
     private readonly DownloadEventBus _downloadBus;
+    private readonly NexusMediaScraper _mediaScraper;
+    private readonly CoverCache _covers;
     private readonly IReadOnlyDictionary<int, string> _categoryMap;
     private readonly IHostServices _host;
+    private IReadOnlyList<NexusScreenshot> _rawScreenshots = Array.Empty<NexusScreenshot>();
 
     public NexusModDetailViewModel(NexusRow row, bool isPremium,
         INexusService nexus, CyberpunkDownloader downloader,
-        DownloadEventBus downloadBus,
+        DownloadEventBus downloadBus, NexusMediaScraper mediaScraper,
+        CoverCache covers,
         IReadOnlyDictionary<int, string> categoryMap,
         IHostServices host)
     {
@@ -38,6 +45,8 @@ public sealed partial class NexusModDetailViewModel : ObservableObject
         _nexus = nexus;
         _downloader = downloader;
         _downloadBus = downloadBus;
+        _mediaScraper = mediaScraper;
+        _covers = covers;
         _categoryMap = categoryMap;
         _host = host;
         IsPremium = isPremium;
@@ -53,6 +62,81 @@ public sealed partial class NexusModDetailViewModel : ObservableObject
         StatusText = "Detail wird geladen …";
 
         _ = LoadDetailAsync();
+        _ = LoadScreenshotsAsync();
+    }
+
+    public ObservableCollection<ScreenshotThumb> Screenshots { get; } = new();
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasScreenshots))]
+    private bool _screenshotsBusy = true;
+    public bool HasScreenshots => Screenshots.Count > 0;
+
+    /// <summary>Scraped die Nexus-Media-Tab-Seite und laedt die Thumbnails
+    /// sequenziell mit 150 ms Delay (Rate-Limit-freundlich). Klick auf ein
+    /// Thumbnail oeffnet <see cref="ScreenshotViewerWindow"/> mit Full-Res.</summary>
+    private async Task LoadScreenshotsAsync()
+    {
+        try
+        {
+            _rawScreenshots = await _mediaScraper.ScrapeAsync(_gameSlug, _modId);
+            if (_rawScreenshots.Count == 0)
+            {
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    ScreenshotsBusy = false;
+                    OnPropertyChanged(nameof(HasScreenshots));
+                });
+                return;
+            }
+            for (int i = 0; i < _rawScreenshots.Count; i++)
+            {
+                var item = _rawScreenshots[i];
+                var idx = i;
+                var localPath = await _covers.GetOrDownloadCoverAsync(item.ThumbUrl);
+                if (localPath is null) continue;
+                Bitmap? bmp = null;
+                try
+                {
+                    bmp = await Task.Run(() =>
+                    {
+                        using var s = File.OpenRead(localPath);
+                        return new Bitmap(s);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _host.Logger.Debug(ex, "Screenshot-Thumb-Load fehlgeschlagen: {Url}", item.ThumbUrl);
+                    continue;
+                }
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    Screenshots.Add(new ScreenshotThumb(idx, bmp));
+                    OnPropertyChanged(nameof(HasScreenshots));
+                });
+                await Task.Delay(150);
+            }
+        }
+        catch (Exception ex)
+        {
+            _host.Logger.Warn(ex, "Screenshot-Load fehlgeschlagen fuer mod_id={Id}", _modId);
+        }
+        finally
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => ScreenshotsBusy = false);
+        }
+    }
+
+    /// <summary>Oeffnet den Fullscreen-Viewer mit dem geklickten Screenshot als
+    /// Startbild. Prev/Next-Navigation im Viewer arbeitet auf der gesamten
+    /// Screenshot-Liste.</summary>
+    [RelayCommand]
+    private void OpenScreenshot(ScreenshotThumb? thumb)
+    {
+        if (thumb is null || _rawScreenshots.Count == 0) return;
+        var window = new ScreenshotViewerWindow(_rawScreenshots, thumb.Index, _host);
+        var owner = (Avalonia.Application.Current?.ApplicationLifetime
+            as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+        if (owner is not null) window.Show(owner); else window.Show();
     }
 
     [ObservableProperty] private string _title = "";
@@ -201,3 +285,8 @@ public sealed partial class NexusModDetailViewModel : ObservableObject
         finally { SummaryBusy = false; }
     }
 }
+
+/// <summary>Ein Screenshot-Thumbnail im Detail-Dialog. <see cref="Index"/>
+/// ist die Position in der Screenshot-Liste — der Fullscreen-Viewer nutzt
+/// den Index als Start-Position fuer die Prev/Next-Navigation.</summary>
+public sealed record ScreenshotThumb(int Index, Bitmap Thumbnail);

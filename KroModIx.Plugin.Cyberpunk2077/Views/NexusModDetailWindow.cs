@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
@@ -176,6 +177,7 @@ public sealed class NexusModDetailWindow : Window
         topRow.Children.Add(topRight);
 
         var aiCard = BuildAiSummaryCard();
+        var screenshotsCard = BuildScreenshotsCard();
 
         var descTitle = new TextBlock { Text = "Beschreibung", Margin = new Thickness(0, 8, 0, 6) };
         descTitle.Classes.Add("section-label");
@@ -194,7 +196,7 @@ public sealed class NexusModDetailWindow : Window
         {
             Spacing = 6,
             Margin = new Thickness(20, 14, 20, 14),
-            Children = { topRow, aiCard, descTitle, descCard },
+            Children = { topRow, aiCard, screenshotsCard, descTitle, descCard },
         };
 
         var scroll = new ScrollViewer
@@ -204,6 +206,78 @@ public sealed class NexusModDetailWindow : Window
             Content = scrollContent,
         };
         return scroll;
+    }
+
+    private static Control BuildScreenshotsCard()
+    {
+        var title = new TextBlock { Text = "📸  Screenshots", Margin = new Thickness(0, 0, 0, 6) };
+        title.Classes.Add("section-label");
+
+        var busy = new TextBlock { Text = "Lade Screenshots …", FontSize = 11 };
+        busy.Classes.Add("muted");
+        busy.Bind(TextBlock.IsVisibleProperty,
+            new Binding(nameof(NexusModDetailViewModel.ScreenshotsBusy)));
+
+        // ItemsControl mit WrapPanel als ItemsPanel — Thumbnails brechen um.
+        var items = new ItemsControl();
+        items.Bind(ItemsControl.ItemsSourceProperty,
+            new Binding(nameof(NexusModDetailViewModel.Screenshots)));
+        items.ItemsPanel = new FuncTemplate<Panel?>(() =>
+            new WrapPanel { Orientation = Orientation.Horizontal });
+        items.ItemTemplate = new FuncDataTemplate<ScreenshotThumb>((thumb, _) =>
+        {
+            if (thumb is null) return null;
+            var img = new Image
+            {
+                Width = 200, Height = 113,
+                Stretch = Stretch.UniformToFill,
+            };
+            img.Bind(Image.SourceProperty, new Binding(nameof(ScreenshotThumb.Thumbnail)));
+            var frame = new Border
+            {
+                Width = 200, Height = 113,
+                CornerRadius = new CornerRadius(4),
+                ClipToBounds = true,
+                Margin = new Thickness(0, 0, 6, 6),
+                Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+                Child = img,
+            };
+            var btn = new Button
+            {
+                Padding = new Thickness(0),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Content = frame,
+            };
+            btn.Bind(Button.CommandProperty, new Binding
+            {
+                RelativeSource = new RelativeSource
+                { Mode = RelativeSourceMode.FindAncestor, AncestorType = typeof(ItemsControl) },
+                Path = "DataContext." + nameof(NexusModDetailViewModel.OpenScreenshotCommand),
+            });
+            btn.Bind(Button.CommandParameterProperty, new Binding("."));
+            return btn;
+        }, true);
+
+        var card = new Border
+        {
+            Padding = new Thickness(14),
+            [!Border.BackgroundProperty] = new DynamicResourceExtension("KrosteSurfaceBrush"),
+            CornerRadius = new CornerRadius(8),
+            Child = new StackPanel { Children = { title, busy, items } },
+        };
+        // Sichtbar nur wenn entweder gerade Thumbs geladen werden oder es
+        // welche gibt — wenn beides false (leerer Mod), Section komplett aus.
+        card.Bind(Control.IsVisibleProperty, new MultiBinding
+        {
+            Bindings =
+            {
+                new Binding(nameof(NexusModDetailViewModel.HasScreenshots)),
+                new Binding(nameof(NexusModDetailViewModel.ScreenshotsBusy)),
+            },
+            Converter = new AnyTrueConverter(),
+        });
+        return card;
     }
 
     private static Control BuildAiSummaryCard()
