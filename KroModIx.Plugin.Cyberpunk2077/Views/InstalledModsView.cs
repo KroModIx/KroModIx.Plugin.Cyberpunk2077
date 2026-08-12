@@ -1,8 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using KroModIx.Plugin.Cyberpunk2077.Services;
 
@@ -53,17 +55,22 @@ public sealed class InstalledModsView : UserControl
         filter.Bind(TextBox.TextProperty,
             new Binding(nameof(InstalledModsViewModel.FilterText)) { Mode = BindingMode.TwoWay });
 
-        // --- Row-Liste ---
-        var list = new ItemsControl();
-        list.Bind(ItemsControl.ItemsSourceProperty,
+        // --- Row-Liste (ListBox statt ItemsControl: Kroste-Skill-Muster,
+        //     damit RelativeSource FindAncestor(ListBox) mit
+        //     DataContext.<Command>-Path korrekt aufloest. ItemsControl
+        //     hatte den Bug dass Buttons dauerhaft disabled waren, weil
+        //     die Command-Bindings nicht griffen). ---
+        var list = new ListBox
+        {
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            SelectionMode = SelectionMode.Single,
+        };
+        list.Bind(ListBox.ItemsSourceProperty,
             new Binding(nameof(InstalledModsViewModel.Rows)));
         list.ItemTemplate = new FuncDataTemplate<ModRow>((row, _) =>
-        {
-            if (row is null) return null;
-            return BuildRowCard();
-        }, true);
-
-        var scroll = new ScrollViewer { Content = list };
+            row is null ? null : BuildRowCard(), true);
 
         Content = new DockPanel
         {
@@ -73,23 +80,38 @@ public sealed class InstalledModsView : UserControl
                 WithDock(toolbar, Dock.Top),
                 WithDock(status, Dock.Top),
                 WithDock(filter, Dock.Top),
-                scroll,
+                list,
             },
         };
     }
 
     private static Control BuildRowCard()
     {
-        // Icon (Typ) + Name (fett) + Subtitle (Typ · Version · Author · Size)
+        // Typ-Icon-Frame 60x60 (📦/⚙/… je Mod-Type) — konsistent mit dem
+        // Kroste-Card-Look aus dem Downloads-Tab. Kein Nexus-Cover moeglich
+        // bei installierten Mods (nach Install ist der Nexus-Filename-Kontext
+        // weg — kein persistierter Install-Manifest im Cyberpunk-Plugin).
+        var iconFrame = new Border
+        {
+            Width = 60, Height = 60,
+            CornerRadius = new CornerRadius(6),
+            [!Border.BackgroundProperty] = new DynamicResourceExtension("KrosteSurfaceBrush"),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         var typeIcon = new TextBlock
         {
-            FontSize = 20,
+            FontSize = 28,
+            HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 12, 0),
         };
         typeIcon.Bind(TextBlock.TextProperty, new Binding("Mod.TypeIcon"));
+        iconFrame.Child = typeIcon;
 
-        var name = new TextBlock { FontWeight = FontWeight.SemiBold, FontSize = 14 };
+        var name = new TextBlock
+        {
+            FontWeight = FontWeight.SemiBold, FontSize = 14,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
         name.Bind(TextBlock.TextProperty, new Binding("Mod.Name"));
 
         var subtitle = new TextBlock { FontSize = 11 };
@@ -98,66 +120,45 @@ public sealed class InstalledModsView : UserControl
 
         var status = new TextBlock
         {
-            FontSize = 10,
-            FontWeight = FontWeight.SemiBold,
+            FontSize = 10, FontWeight = FontWeight.SemiBold,
             Margin = new Thickness(0, 2, 0, 0),
         };
-        // Farbe je nach enabled/disabled — via Style-Class-Toggle wäre
-        // sauberer, aber ein einfacher Foreground-Bind reicht.
         status.Bind(TextBlock.TextProperty, new Binding(nameof(ModRow.StatusLabel)));
         status.Bind(TextBlock.ForegroundProperty,
             new Binding("Mod.IsEnabled") { Converter = EnabledColorConverter.Instance });
 
         var titleColumn = new StackPanel
         {
-            Children = { name, subtitle, status },
+            Spacing = 2,
             VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(14, 0, 0, 0),
+            Children = { name, subtitle, status },
         };
 
         var toggleBtn = new Button();
         toggleBtn.Bind(Button.ContentProperty, new Binding(nameof(ModRow.ToggleButtonLabel)));
-        toggleBtn.Bind(Button.CommandProperty, new Binding
-        {
-            Path = nameof(InstalledModsViewModel.ToggleEnabledCommand),
-            RelativeSource = new RelativeSource
-            {
-                Mode = RelativeSourceMode.FindAncestor,
-                AncestorType = typeof(ItemsControl),
-            },
-        });
-        toggleBtn.CommandParameter = null;
-        toggleBtn.Bind(Button.CommandParameterProperty, new Binding("."));
+        BindRowCommand(toggleBtn, nameof(InstalledModsViewModel.ToggleEnabledCommand));
 
         var uninstallBtn = new Button { Content = Strings.T("btn.uninstall") };
         uninstallBtn.Classes.Add("danger");
-        uninstallBtn.Bind(Button.CommandProperty, new Binding
-        {
-            Path = nameof(InstalledModsViewModel.UninstallCommand),
-            RelativeSource = new RelativeSource
-            {
-                Mode = RelativeSourceMode.FindAncestor,
-                AncestorType = typeof(ItemsControl),
-            },
-        });
-        uninstallBtn.Bind(Button.CommandParameterProperty, new Binding("."));
+        BindRowCommand(uninstallBtn, nameof(InstalledModsViewModel.UninstallCommand));
 
         var actions = new StackPanel
         {
             Orientation = Orientation.Horizontal, Spacing = 6,
             VerticalAlignment = VerticalAlignment.Center,
+            Children = { toggleBtn, uninstallBtn },
         };
-        actions.Children.Add(toggleBtn);
-        actions.Children.Add(uninstallBtn);
 
         var grid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
             Margin = new Thickness(12, 8),
         };
-        Grid.SetColumn(typeIcon, 0);
+        Grid.SetColumn(iconFrame, 0);
         Grid.SetColumn(titleColumn, 1);
         Grid.SetColumn(actions, 2);
-        grid.Children.Add(typeIcon);
+        grid.Children.Add(iconFrame);
         grid.Children.Add(titleColumn);
         grid.Children.Add(actions);
 
@@ -168,6 +169,20 @@ public sealed class InstalledModsView : UserControl
         };
         card.Classes.Add("card");
         return card;
+    }
+
+    /// <summary>Row-Command-Helper nach Kroste-Skill-Standard:
+    /// FindAncestor(ListBox) + Path „DataContext.<Command>". Ohne dieses
+    /// Muster bleiben die Buttons disabled weil das Binding null bleibt.</summary>
+    private static void BindRowCommand(Button btn, string commandName)
+    {
+        btn.Bind(Button.CommandProperty, new Binding
+        {
+            RelativeSource = new RelativeSource
+            { Mode = RelativeSourceMode.FindAncestor, AncestorType = typeof(ListBox) },
+            Path = "DataContext." + commandName,
+        });
+        btn.Bind(Button.CommandParameterProperty, new Binding("."));
     }
 
     private static Control WithDock(Control c, Dock d) { DockPanel.SetDock(c, d); return c; }
