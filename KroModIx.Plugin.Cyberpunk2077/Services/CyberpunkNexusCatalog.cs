@@ -23,6 +23,8 @@ public sealed class CyberpunkNexusCatalog
     public const string GameSlug = "cyberpunk2077";
 
     private readonly INexusService _nexus;
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private static readonly TimeSpan CoalesceWindow = TimeSpan.FromSeconds(30);
     private IReadOnlyList<NexusCatalogEntry> _cache = Array.Empty<NexusCatalogEntry>();
     private DateTime _cacheAt;
 
@@ -37,7 +39,14 @@ public sealed class CyberpunkNexusCatalog
     /// <summary>Refresht den Katalog live. Aggregiert die drei Endpoints
     /// (latest_added → latest_updated → trending) sequenziell und dedup't
     /// per <c>ModId</c>. Fehler pro Endpoint werden geloggt aber der Rest
-    /// laeuft weiter (Netz-Aussetzer nicht totaler Datenverlust).</summary>
+    /// laeuft weiter (Netz-Aussetzer nicht totaler Datenverlust).
+    ///
+    /// <para><b>SemaphoreSlim + Coalesce-Fenster (v0.4.1):</b> mehrere
+    /// gleichzeitige Aufrufer (Plugin-Init-Auto-Check, View-Ctor,
+    /// ApiKeyChanged-Handler) werden serialisiert. Wenn der Cache jünger
+    /// als 30 s ist, wird der Refresh übersprungen — sonst hätten wir
+    /// 3 API-Calls × N Aufrufer verschwendet (im Log gesehen: 9 parallele
+    /// Refreshes = 27 API-Calls für einen einzigen Katalog-Öffnungs-Event).</para></summary>
     public async Task<IReadOnlyList<NexusCatalogEntry>> RefreshAsync(CancellationToken ct = default)
     {
         if (!_nexus.HasApiKey)
@@ -46,25 +55,39 @@ public sealed class CyberpunkNexusCatalog
             return _cache;
         }
 
-        var seen = new Dictionary<int, NexusCatalogEntry>();
-        foreach (var endpoint in new[] { "latest_added", "latest_updated", "trending" })
+        await _refreshGate.WaitAsync(ct);
+        try
         {
-            try
+            // Coalesce: nach dem Warten schauen ob ein anderer Aufrufer den
+            // Refresh in der Zwischenzeit erledigt hat.
+            if (_cache.Count > 0 && DateTime.UtcNow - _cacheAt < CoalesceWindow)
             {
-                var chunk = await _nexus.GetLatestModsAsync(GameSlug, endpoint, ct);
-                foreach (var e in chunk)
-                    seen[e.ModId] = e; // dedup — letzter gewinnt (updated_utc ist bei allen dabei)
+                Log.Debug("Katalog-Refresh coalesced — Cache ist {Sec:F0} s jung",
+                    (DateTime.UtcNow - _cacheAt).TotalSeconds);
+                return _cache;
             }
-            catch (Exception ex)
+
+            var seen = new Dictionary<int, NexusCatalogEntry>();
+            foreach (var endpoint in new[] { "latest_added", "latest_updated", "trending" })
             {
-                Log.Warn(ex, "Cyberpunk Nexus-Catalog {Endpoint} fehlgeschlagen", endpoint);
+                try
+                {
+                    var chunk = await _nexus.GetLatestModsAsync(GameSlug, endpoint, ct);
+                    foreach (var e in chunk)
+                        seen[e.ModId] = e; // dedup — letzter gewinnt
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(ex, "Cyberpunk Nexus-Catalog {Endpoint} fehlgeschlagen", endpoint);
+                }
             }
+            _cache = seen.Values
+                .OrderByDescending(e => e.UpdatedUtc)
+                .ToList();
+            _cacheAt = DateTime.UtcNow;
+            Log.Info("Cyberpunk Nexus-Katalog aktualisiert: {N} unique Mods", _cache.Count);
+            return _cache;
         }
-        _cache = seen.Values
-            .OrderByDescending(e => e.UpdatedUtc)
-            .ToList();
-        _cacheAt = DateTime.UtcNow;
-        Log.Info("Cyberpunk Nexus-Katalog aktualisiert: {N} unique Mods", _cache.Count);
-        return _cache;
+        finally { _refreshGate.Release(); }
     }
 }

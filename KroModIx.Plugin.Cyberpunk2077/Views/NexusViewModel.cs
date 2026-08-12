@@ -15,12 +15,13 @@ namespace KroModIx.Plugin.Cyberpunk2077.Views;
 /// <summary>Katalog-Tab (v0.2): aggregierter Nexus-Katalog (latest_added +
 /// latest_updated + trending). Cover-Enrichment im Hintergrund, Kategorien-
 /// Filter, Klick auf Row öffnet die Nexus-Detail-Seite im Browser.</summary>
-public sealed partial class NexusViewModel : ObservableObject
+public sealed partial class NexusViewModel : ObservableObject, IDisposable
 {
     private readonly CyberpunkNexusCatalog _catalog;
     private readonly CoverCache _covers;
     private readonly INexusService _nexus;
     private readonly IHostServices _host;
+    private readonly EventHandler _apiKeyChangedHandler;
 
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private bool _isBusy;
@@ -40,9 +41,19 @@ public sealed partial class NexusViewModel : ObservableObject
         _covers = covers;
         _nexus = nexus;
         _host = host;
-        // Bei Key-Change (User trägt neuen im Host-Settings ein) → Refresh
-        _nexus.ApiKeyChanged += (_, _) => Dispatcher.UIThread.Post(() => _ = RefreshAsync());
+        // Bei Key-Change (User trägt neuen im Host-Settings ein) → Refresh.
+        // Handler-Instanz merken damit wir sie in Dispose entfernen können —
+        // sonst leakt bei jedem Tab-Wechsel ein Handler + der Katalog wird
+        // N× refresht (Rate-Limit-Verschwendung).
+        _apiKeyChangedHandler = (_, _) =>
+            Dispatcher.UIThread.Post(() => _ = RefreshAsync());
+        _nexus.ApiKeyChanged += _apiKeyChangedHandler;
         _ = InitialLoadAsync();
+    }
+
+    public void Dispose()
+    {
+        _nexus.ApiKeyChanged -= _apiKeyChangedHandler;
     }
 
     private async Task InitialLoadAsync()
