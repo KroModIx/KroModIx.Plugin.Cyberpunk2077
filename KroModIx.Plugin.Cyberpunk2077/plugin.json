@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "kroste.cyberpunk2077",
   "displayName": "Cyberpunk 2077 Mod-Manager",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "author": "Kroste",
   "description": "Mod-Verwaltung für Cyberpunk 2077 (CD Projekt Red). Erkennt alle gängigen Mod-Typen: .archive-Assets, REDmods, Cyber Engine Tweaks (CET), RED4ext-Plugins (.dll) und redscript-Mods (.reds). Enable/Disable via .disabled-Suffix. Vier Tabs: Installiert / Nexus-Katalog (mit Detail-Dialog, KI-Zusammenfassung, Screenshot-Galerie mit Fullscreen-Viewer, Premium-Direct-Download, Adult-Warning) / Downloads (ZIP-Auto-Layout-Detection, Bulk-Install) / Update-Discovery für REDmods mit ↑-Sidebar-Badge. Zentraler Host-Nexus-Baukasten (Contracts v1.14.0).",
   "assembly": "KroModIx.Plugin.Cyberpunk2077.dll",

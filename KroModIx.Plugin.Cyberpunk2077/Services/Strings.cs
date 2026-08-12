@@ -43,6 +43,7 @@ public static class Strings
         ["btn.install_all"] = "📥  Alle installieren",
         ["btn.install"] = "📥  Installieren",
         ["btn.delete"] = "🗑",
+        ["btn.delete_file"] = "🗑  Löschen",
         ["btn.uninstall"] = "🗑  Deinstallieren",
         ["btn.close"] = "Schließen",
         ["btn.download"] = "⬇  Download",
@@ -128,8 +129,8 @@ public static class Strings
         ["detail.screenshot_window_title"] = "Screenshot",
 
         // Dialogs + Downloads-Statusbar
-        ["status.no_zips_hint"] = "Keine ZIPs unter {0} — Nexus-Downloads landen hier.",
-        ["status.zips_ready"] = "{0} ZIP(s) bereit zum Install.",
+        ["status.no_zips_hint"] = "Keine Archive unter {0} — Nexus-Downloads (ZIP/RAR/7z) landen hier.",
+        ["status.zips_ready"] = "{0} Archiv(e) bereit zum Install.",
         ["dialog.install_all_title"] = "Alle installieren?",
         ["dialog.install_all_msg"] = "{0} ZIP(s) werden nacheinander ins Game-Root extrahiert. Fortfahren?",
         ["dialog.install_all_ok"] = "Installieren",
@@ -152,6 +153,7 @@ public static class Strings
         ["btn.install_all"] = "📥  Install all",
         ["btn.install"] = "📥  Install",
         ["btn.delete"] = "🗑",
+        ["btn.delete_file"] = "🗑  Delete",
         ["btn.uninstall"] = "🗑  Uninstall",
         ["btn.close"] = "Close",
         ["btn.download"] = "⬇  Download",
@@ -230,8 +232,8 @@ public static class Strings
         ["detail.window_title"] = "Nexus mod details",
         ["detail.screenshot_window_title"] = "Screenshot",
 
-        ["status.no_zips_hint"] = "No ZIPs in {0} — Nexus downloads land here.",
-        ["status.zips_ready"] = "{0} ZIP(s) ready to install.",
+        ["status.no_zips_hint"] = "No archives in {0} — Nexus downloads (ZIP/RAR/7z) land here.",
+        ["status.zips_ready"] = "{0} archive(s) ready to install.",
         ["dialog.install_all_title"] = "Install all?",
         ["dialog.install_all_msg"] = "{0} ZIP(s) will be extracted into the game root sequentially. Continue?",
         ["dialog.install_all_ok"] = "Install",
