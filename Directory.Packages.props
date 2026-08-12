@@ -5,6 +5,8 @@
     <PackageVersion Include="KroModIx.Plugin.Contracts" Version="1.15.0" />
     <PackageVersion Include="Avalonia" Version="12.1.0" />
     <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <!-- v0.8.1: SharpCompress fuer ZIP/RAR/7z-Support im Downloads-Tab. -->
+    <PackageVersion Include="SharpCompress" Version="1.0.0" />
     <PackageVersion Include="MinVer" Version="7.0.0" />
 
     <!-- Tests -->

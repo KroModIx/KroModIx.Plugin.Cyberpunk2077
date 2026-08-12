@@ -59,13 +59,17 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
             StatusText = Strings.T("status.downloads_dir_missing") + _paths.DownloadsDir;
             return;
         }
-        var zips = Directory.EnumerateFiles(_paths.DownloadsDir, "*.zip",
-            SearchOption.TopDirectoryOnly).ToList();
-        foreach (var p in zips.OrderByDescending(File.GetLastWriteTimeUtc))
+        // v0.8.1: alle unterstuetzten Archiv-Formate scannen (ZIP+RAR+7z).
+        var archives = Directory.EnumerateFiles(_paths.DownloadsDir, "*",
+                SearchOption.TopDirectoryOnly)
+            .Where(p => CyberpunkZipInstaller.SupportedExtensions
+                .Any(ext => p.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        foreach (var p in archives.OrderByDescending(File.GetLastWriteTimeUtc))
             Rows.Add(new DownloadRow(p, new FileInfo(p)));
-        StatusText = zips.Count == 0
+        StatusText = archives.Count == 0
             ? string.Format(Strings.T("status.no_zips_hint"), _paths.DownloadsDir)
-            : string.Format(Strings.T("status.zips_ready"), zips.Count);
+            : string.Format(Strings.T("status.zips_ready"), archives.Count);
     }
 
     [RelayCommand]

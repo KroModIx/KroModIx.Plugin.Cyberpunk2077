@@ -1,16 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
 using KroModIx.Plugin.Contracts;
 using NLog;
+using SharpCompress.Archives;
+using SharpCompress.Common;
 
 namespace KroModIx.Plugin.Cyberpunk2077.Services;
 
-/// <summary>Installiert eine Nexus-Mod-ZIP mit Auto-Layout-Detection ins
-/// Cyberpunk-Game-Root. Cyberpunk-ZIPs enthalten typischerweise bereits
-/// die Zielordner-Struktur ausgehend vom Game-Root:
+/// <summary>Installiert ein Nexus-Mod-Archiv (ZIP/RAR/7z) mit Auto-Layout-
+/// Detection ins Cyberpunk-Game-Root. Nutzt <see cref="ArchiveFactory"/>
+/// aus SharpCompress — Format wird automatisch erkannt, keine
+/// Extension-Whitelist noetig.
+///
+/// <para>Cyberpunk-Archive enthalten typischerweise bereits die Zielordner-
+/// Struktur ausgehend vom Game-Root:</para>
 /// <list type="bullet">
 ///   <item><c>archive/pc/mod/*.archive</c></item>
 ///   <item><c>mods/&lt;name&gt;/info.json + ...</c></item>
@@ -18,11 +23,10 @@ namespace KroModIx.Plugin.Cyberpunk2077.Services;
 ///   <item><c>red4ext/plugins/&lt;name&gt;/</c></item>
 ///   <item><c>r6/scripts/</c> oder <c>r6/tweaks/</c></item>
 /// </list>
-/// Wenn im ZIP-Root eines dieser Präfixe existiert → direktes Extract nach
-/// <c>&lt;InstallDir&gt;</c> (bekanntes Layout). Sonst versuchen wir
-/// Fallback-Heuristiken (single .archive → archive/pc/mod/, single .reds →
-/// r6/scripts/). Wenn nichts greift: <see cref="ZipInstallResult.Success"/>=false
-/// mit Fehler-Meldung.</summary>
+/// Wenn im Archive-Root eines dieser Praefixe existiert → direktes Extract
+/// nach <c>&lt;InstallDir&gt;</c> (bekanntes Layout). Sonst Fallback-
+/// Heuristik (single .archive → archive/pc/mod/). Wenn nichts greift:
+/// <see cref="ZipInstallResult.Success"/>=false mit Fehler-Meldung.</summary>
 public sealed class CyberpunkZipInstaller
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
@@ -41,10 +45,16 @@ public sealed class CyberpunkZipInstaller
         "engine/",
     };
 
-    public ZipInstallResult Install(string zipPath, DetectedGame game)
+    /// <summary>Unterstuetzte Archiv-Endungen fuer Downloads-Tab-Scan +
+    /// Install. SharpCompress kann noch mehr (.tar, .gz), aber Nexus-
+    /// Cyberpunk-Mods kommen fast ausschliesslich als ZIP oder RAR,
+    /// selten 7z.</summary>
+    public static readonly string[] SupportedExtensions = new[] { ".zip", ".rar", ".7z" };
+
+    public ZipInstallResult Install(string archivePath, DetectedGame game)
     {
-        if (!File.Exists(zipPath))
-            return new ZipInstallResult(false, "ZIP nicht gefunden: " + zipPath, Array.Empty<string>());
+        if (!File.Exists(archivePath))
+            return new ZipInstallResult(false, "Archiv nicht gefunden: " + archivePath, Array.Empty<string>());
         var installDir = game.InstallDir;
         if (string.IsNullOrEmpty(installDir) || !Directory.Exists(installDir))
             return new ZipInstallResult(false, "Cyberpunk-InstallDir ungültig: " + installDir,
@@ -52,27 +62,28 @@ public sealed class CyberpunkZipInstaller
 
         try
         {
-            using var archive = ZipFile.OpenRead(zipPath);
+            using var archive = ArchiveFactory.Open(archivePath);
             var entries = archive.Entries
-                .Where(e => !string.IsNullOrEmpty(e.FullName) && !e.FullName.EndsWith('/'))
+                .Where(e => !e.IsDirectory && !string.IsNullOrEmpty(e.Key))
                 .ToList();
+            if (entries.Count == 0)
+                return new ZipInstallResult(false, "Archiv ist leer.", Array.Empty<string>());
 
-            // 1) Bekannter Root im ZIP? Dann direkt ins Game-Root extrahieren.
-            var normalized = entries.Select(e => e.FullName.Replace('\\', '/')).ToList();
+            var normalized = entries.Select(e => (e.Key ?? "").Replace('\\', '/')).ToList();
+
+            // 1) Bekannter Root im Archiv? Dann direkt ins Game-Root extrahieren.
             bool knownLayout = normalized.Any(p =>
                 KnownRoots.Any(root => p.StartsWith(root, StringComparison.OrdinalIgnoreCase)));
 
             if (knownLayout)
             {
-                var installed = ExtractDirect(archive, installDir);
+                var installed = ExtractDirect(entries, installDir);
                 return new ZipInstallResult(true,
                     $"Direkt-Layout erkannt — {installed.Count} Datei(en) ins Game-Root extrahiert.",
                     installed);
             }
 
-            // 2) Fallback-Heuristiken auf Flat-ZIP-Layout (keine bekannten Ordner).
-            //    Single .archive → archive/pc/mod/
-            //    Single .reds → r6/scripts/
+            // 2) Fallback: single-.archive-Layout → archive/pc/mod/.
             var archives = normalized.Where(p =>
                 p.EndsWith(".archive", StringComparison.OrdinalIgnoreCase)).ToList();
             var reds = normalized.Where(p =>
@@ -83,12 +94,12 @@ public sealed class CyberpunkZipInstaller
                 var target = Path.Combine(installDir, "archive", "pc", "mod");
                 Directory.CreateDirectory(target);
                 var installed = new List<string>();
-                foreach (var e in entries.Where(e => e.FullName.EndsWith(".archive",
-                    StringComparison.OrdinalIgnoreCase)))
+                foreach (var e in entries.Where(e =>
+                    (e.Key ?? "").EndsWith(".archive", StringComparison.OrdinalIgnoreCase)))
                 {
-                    var name = Path.GetFileName(e.FullName);
+                    var name = Path.GetFileName((e.Key ?? "").Replace('\\', '/'));
                     var dst = Path.Combine(target, name);
-                    e.ExtractToFile(dst, overwrite: true);
+                    ExtractOne(e, dst);
                     installed.Add(dst);
                 }
                 return new ZipInstallResult(true,
@@ -97,33 +108,42 @@ public sealed class CyberpunkZipInstaller
             }
 
             return new ZipInstallResult(false,
-                "Unbekanntes ZIP-Layout — bitte manuell entpacken. " +
-                $"ZIP enthält {entries.Count} Dateien in Ordnern: " +
-                string.Join(", ", entries.Take(5).Select(e => Path.GetDirectoryName(e.FullName)).Distinct()),
+                "Unbekanntes Archiv-Layout — bitte manuell entpacken. " +
+                $"Archiv enthält {entries.Count} Dateien in Ordnern: " +
+                string.Join(", ", normalized.Take(5)
+                    .Select(p => Path.GetDirectoryName(p)).Distinct()),
                 Array.Empty<string>());
         }
         catch (Exception ex)
         {
-            Log.Warn(ex, "ZIP-Install fehlgeschlagen: {Zip}", zipPath);
+            Log.Warn(ex, "Archive-Install fehlgeschlagen: {Archive}", archivePath);
             return new ZipInstallResult(false, "Fehler: " + ex.Message, Array.Empty<string>());
         }
     }
 
-    private static IReadOnlyList<string> ExtractDirect(ZipArchive archive, string installDir)
+    private static IReadOnlyList<string> ExtractDirect(
+        IEnumerable<IArchiveEntry> entries, string installDir)
     {
         var installed = new List<string>();
-        foreach (var e in archive.Entries)
+        foreach (var e in entries)
         {
-            var name = e.FullName.Replace('\\', '/');
+            var name = (e.Key ?? "").Replace('\\', '/');
             if (string.IsNullOrEmpty(name) || name.EndsWith('/')) continue;
-            // Zip-Slip-Prevention: keine ../-Pfade
+            // Zip-Slip-Prevention: keine ../-Pfade akzeptieren.
             if (name.Contains("..")) { Log.Warn("Zip-Slip-Attempt: {Name}", name); continue; }
             var dst = Path.Combine(installDir, name.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
-            e.ExtractToFile(dst, overwrite: true);
+            ExtractOne(e, dst);
             installed.Add(dst);
         }
         return installed;
+    }
+
+    private static void ExtractOne(IArchiveEntry entry, string destination)
+    {
+        using var input = entry.OpenEntryStream();
+        using var output = File.Create(destination);
+        input.CopyTo(output);
     }
 }
 

@@ -18,6 +18,10 @@
                       PrivateAssets="all" ExcludeAssets="runtime" />
     <PackageReference Include="CommunityToolkit.Mvvm"
                       PrivateAssets="all" ExcludeAssets="runtime" />
+    <!-- v0.8.1: SharpCompress fuer RAR/7z-Support im Downloads-Tab.
+         KEIN PrivateAssets/ExcludeAssets — das ist eine plugin-eigene
+         Runtime-Dep die NICHT vom Host kommt, muss ins Plugin-Bundle. -->
+    <PackageReference Include="SharpCompress" />
   </ItemGroup>
 
   <ItemGroup>
