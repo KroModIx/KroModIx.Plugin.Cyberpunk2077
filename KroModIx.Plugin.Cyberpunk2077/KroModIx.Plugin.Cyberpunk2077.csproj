@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>KroModIx.Plugin.Cyberpunk2077</RootNamespace>
+    <AssemblyName>KroModIx.Plugin.Cyberpunk2077</AssemblyName>
+    <!-- v0.1 hat noch keine plugin-eigenen transitiven Dependencies (nur
+         Contracts/Avalonia/Toolkit — alle kommen vom Host). Trotzdem setzen
+         wir CopyLocalLockFileAssemblies=true fuer den Fall dass spaeter
+         Nexus-Katalog oder Cover-Cache-Deps dazukommen. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Host-Assemblies: ExcludeAssets=runtime — kommen vom Host mit. -->
+    <PackageReference Include="KroModIx.Plugin.Contracts"
+                      PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="Avalonia"
+                      PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="CommunityToolkit.Mvvm"
+                      PrivateAssets="all" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

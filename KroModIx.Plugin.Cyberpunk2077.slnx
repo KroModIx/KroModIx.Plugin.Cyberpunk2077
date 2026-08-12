@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="KroModIx.Plugin.Cyberpunk2077/KroModIx.Plugin.Cyberpunk2077.csproj" />
+  <Project Path="KroModIx.Plugin.Cyberpunk2077.Tests/KroModIx.Plugin.Cyberpunk2077.Tests.csproj" />
+</Solution>

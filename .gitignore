@@ -1,0 +1,9 @@
+bin/
+obj/
+publish/
+*.user
+.vs/
+.idea/
+.vscode/settings.json
+# lokaler Dev-Feed-Override (siehe nuget.local.config im Repo-Kommentar)
+nuget.local.config

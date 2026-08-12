@@ -1,0 +1,17 @@
+<Project>
+  <ItemGroup>
+    <!-- v1.13.0: FavoriteGameKeys + Sortier-Reihenfolge, keine plugin-relevanten
+         Contract-Aenderungen — v1.7.0-Baseline (IUpdateNotifier) reicht. Aber
+         wir pinnen auf die neueste damit MinHostVersion konservativ passt. -->
+    <PackageVersion Include="KroModIx.Plugin.Contracts" Version="1.13.0" />
+    <PackageVersion Include="Avalonia" Version="12.1.0" />
+    <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageVersion Include="MinVer" Version="7.0.0" />
+
+    <!-- Tests -->
+    <PackageVersion Include="xunit.v3" Version="3.2.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageVersion Include="FluentAssertions" Version="[7.2.2,8.0.0)" />
+  </ItemGroup>
+</Project>
