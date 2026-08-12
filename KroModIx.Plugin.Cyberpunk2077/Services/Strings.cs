@@ -110,6 +110,7 @@ public static class Strings
         ["notify.bulk_disable_result"] = "{0} deaktiviert, {1} Fehler.",
         ["notify.bulk_enable_result"] = "{0} aktiviert, {1} Fehler.",
         ["notify.bulk_install_result"] = "{0} installiert, {1} Fehler.",
+        ["notify.no_nexus_id"] = "Keine Nexus-Mod-Id im Dateinamen erkennbar: {0}",
 
         // Detail-Dialog labels
         ["detail.section.description"] = "Beschreibung",
@@ -215,6 +216,7 @@ public static class Strings
         ["notify.bulk_disable_result"] = "{0} disabled, {1} error(s).",
         ["notify.bulk_enable_result"] = "{0} enabled, {1} error(s).",
         ["notify.bulk_install_result"] = "{0} installed, {1} error(s).",
+        ["notify.no_nexus_id"] = "No Nexus mod-id recognizable in filename: {0}",
 
         ["detail.section.description"] = "Description",
         ["detail.section.screenshots"] = "📸  Screenshots",

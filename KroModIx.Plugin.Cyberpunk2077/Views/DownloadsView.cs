@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Layout;
@@ -9,9 +10,10 @@ using KroModIx.Plugin.Cyberpunk2077.Services;
 
 namespace KroModIx.Plugin.Cyberpunk2077.Views;
 
-/// <summary>Downloads-Tab (Kroste-Card-Look, ListBox statt ItemsControl weil
-/// die RelativeSource-Bindings pro Row auf DataContext.CommandName gehen
-/// muessen — ListBoxItem-Container hat den DataContext).</summary>
+/// <summary>Downloads-Tab (v0.8.3): Kroste-Card-Look mit Nexus-Enrichment
+/// (Cover 140x90, Meta-Zeile mit Author · Version · Size · Datum, Summary,
+/// Action-Buttons Install/Details/Löschen). Details öffnet den Nexus-
+/// Detail-Dialog aus dem Nexus-Tab-Muster (analog Icarus).</summary>
 public sealed class DownloadsView : UserControl
 {
     public DownloadsView()
@@ -51,6 +53,12 @@ public sealed class DownloadsView : UserControl
         list.Bind(ListBox.ItemsSourceProperty, new Binding(nameof(DownloadsViewModel.Rows)));
         list.ItemTemplate = new FuncDataTemplate<DownloadRow>((row, _) =>
             row is null ? null : BuildRowCard(), true);
+        // Doppelklick auf Row = Detail-Dialog (falls Nexus-Match).
+        list.DoubleTapped += (_, _) =>
+        {
+            if (DataContext is DownloadsViewModel vm && list.SelectedItem is DownloadRow row)
+                vm.ShowDetailCommand.Execute(row);
+        };
 
         Content = new DockPanel
         {
@@ -66,61 +74,104 @@ public sealed class DownloadsView : UserControl
 
     private static Control BuildRowCard()
     {
-        // Icon-Frame links (analog Cover im Nexus-Tab) — 60x60, KrosteSurface
-        // mit 📦-Fallback. Bei Nexus-Downloads koennte man spaeter den Cover
-        // via ModId-Parse aus dem Filename holen (Kroste-Skill-Muster).
-        var iconFrame = new Border
+        // Cover-Frame 140x90 (analog Nexus-Katalog-Row). Bei Nicht-Nexus-
+        // Filenames oder solange Enrichment noch laeuft: 📦-Fallback.
+        var coverFrame = new Border
         {
-            Width = 60, Height = 60,
+            Width = 140, Height = 90,
             CornerRadius = new CornerRadius(6),
+            ClipToBounds = true,
             [!Border.BackgroundProperty] = new DynamicResourceExtension("KrosteSurfaceBrush"),
-            VerticalAlignment = VerticalAlignment.Center,
         };
-        var iconText = new TextBlock
+        var coverPanel = new Panel();
+        var coverFallback = new TextBlock
         {
-            Text = "📦", FontSize = 28,
+            Text = "📦", FontSize = 32,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        iconFrame.Child = iconText;
+        coverFallback.Classes.Add("muted");
+        coverPanel.Children.Add(coverFallback);
+        var coverImage = new Image
+        {
+            Stretch = Stretch.UniformToFill,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        coverImage.Bind(Image.SourceProperty, new Binding(nameof(DownloadRow.Cover)));
+        coverPanel.Children.Add(coverImage);
+        coverFrame.Child = coverPanel;
 
-        // Filename gross oben, mit TextTrimming damit die Buttons rechts
-        // sichtbar bleiben (Cyberpunk-Downloads-Filenames sind lang:
-        // "K's H10 Apartment Plus 32605 1.0 2026-08-12T16-25Z X32s3EuCx.rar").
-        var name = new TextBlock
+        // Titel = ModName (aus Nexus-Fetch) sonst FileName-Fallback (via DisplayName).
+        var title = new TextBlock
         {
             FontWeight = FontWeight.SemiBold,
-            FontSize = 13,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
-        name.Bind(TextBlock.TextProperty, new Binding(nameof(DownloadRow.FileName)));
+        title.Bind(TextBlock.TextProperty, new Binding(nameof(DownloadRow.DisplayName)));
 
-        // Meta-Zeile: Datum · Groesse (Kroste-Standard mit • Trennern)
+        // Meta-Zeile: Author · Version · Size · Datum (analog Icarus Downloads).
         var meta = new StackPanel
         {
             Orientation = Orientation.Horizontal, Spacing = 8,
             Margin = new Thickness(0, 2, 0, 0),
         };
-        var dateTb = new TextBlock { FontSize = 11 }; dateTb.Classes.Add("muted");
-        dateTb.Bind(TextBlock.TextProperty, new Binding(nameof(DownloadRow.ModifiedText)));
-        var sep = new TextBlock { Text = "·", FontSize = 11 }; sep.Classes.Add("muted");
-        var sizeTb = new TextBlock { FontSize = 11 }; sizeTb.Classes.Add("muted");
-        sizeTb.Bind(TextBlock.TextProperty, new Binding(nameof(DownloadRow.SizeText)));
-        meta.Children.Add(dateTb);
-        meta.Children.Add(sep);
-        meta.Children.Add(sizeTb);
+        void AddMuted(string path)
+        {
+            var t = new TextBlock(); t.Classes.Add("muted");
+            t.Bind(TextBlock.TextProperty, new Binding(path));
+            meta.Children.Add(t);
+        }
+        void AddSep()
+        {
+            var s = new TextBlock { Text = "·" }; s.Classes.Add("muted");
+            meta.Children.Add(s);
+        }
+        AddMuted(nameof(DownloadRow.Author));
+        AddSep();
+        AddMuted(nameof(DownloadRow.VersionDisplay));
+        AddSep();
+        AddMuted(nameof(DownloadRow.SizeText));
+        AddSep();
+        AddMuted(nameof(DownloadRow.ModifiedText));
+
+        // Summary max. 2 Zeilen, nur wenn Enrichment was geliefert hat.
+        var summaryTb = new TextBlock
+        {
+            Margin = new Thickness(0, 4, 0, 0),
+            TextWrapping = TextWrapping.Wrap,
+            MaxHeight = 40,
+        };
+        summaryTb.Classes.Add("secondary");
+        summaryTb.Bind(TextBlock.TextProperty, new Binding(nameof(DownloadRow.Summary)));
+        summaryTb.Bind(TextBlock.IsVisibleProperty, new Binding(nameof(DownloadRow.HasSummary)));
+
+        // Original-Dateiname klein/muted als Sanity-Info (Nexus-Match kann
+        // fehlgehen, dann zeigt DisplayName den Filename).
+        var fileNameTb = new TextBlock
+        {
+            FontSize = 10, Margin = new Thickness(0, 4, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        fileNameTb.Classes.Add("muted");
+        fileNameTb.Bind(TextBlock.TextProperty, new Binding(nameof(DownloadRow.FileName)));
 
         var textStack = new StackPanel
         {
             Spacing = 2,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(14, 0, 0, 0),
-            Children = { name, meta },
+            Children = { title, meta, summaryTb, fileNameTb },
         };
 
         var installBtn = new Button { Content = Strings.T("btn.install") };
         installBtn.Classes.Add("accent");
         BindRowCommand(installBtn, nameof(DownloadsViewModel.InstallCommand));
+
+        // Details-Button: nur enabled wenn ModId aus Filename lesbar war.
+        var detailBtn = new Button { Content = Strings.T("btn.details") };
+        BindRowCommand(detailBtn, nameof(DownloadsViewModel.ShowDetailCommand));
+        detailBtn.Bind(Button.IsEnabledProperty, new Binding(nameof(DownloadRow.HasNexusMatch)));
 
         var deleteBtn = new Button { Content = Strings.T("btn.delete_file") };
         deleteBtn.Classes.Add("danger");
@@ -128,16 +179,15 @@ public sealed class DownloadsView : UserControl
 
         var actions = new StackPanel
         {
-            Orientation = Orientation.Horizontal, Spacing = 6,
-            VerticalAlignment = VerticalAlignment.Center,
-            Children = { installBtn, deleteBtn },
+            Spacing = 6, VerticalAlignment = VerticalAlignment.Center,
+            Children = { installBtn, detailBtn, deleteBtn },
         };
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-        Grid.SetColumn(iconFrame, 0);
+        Grid.SetColumn(coverFrame, 0);
         Grid.SetColumn(textStack, 1);
         Grid.SetColumn(actions, 2);
-        grid.Children.Add(iconFrame);
+        grid.Children.Add(coverFrame);
         grid.Children.Add(textStack);
         grid.Children.Add(actions);
 
@@ -146,10 +196,6 @@ public sealed class DownloadsView : UserControl
         return card;
     }
 
-    /// <summary>Row-Command-Binding im Kroste-Standard: FindAncestor(ListBox)
-    /// + Path "DataContext.CommandName". Wichtig weil das ItemsControl-Muster
-    /// (ohne "DataContext.") die Bindings nicht aufloest — die Row wird als
-    /// ListBoxItem gewrappt und der DataContext liegt am Container.</summary>
     private static void BindRowCommand(Button btn, string commandName)
     {
         btn.Bind(Button.CommandProperty, new Binding

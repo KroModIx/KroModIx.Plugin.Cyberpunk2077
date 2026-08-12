@@ -20,7 +20,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.8.2",
+        Version: "0.8.3",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert / Nexus-Katalog / Downloads. " +
             "v0.8: DE+EN-Uebersetzung aller User-facing Strings (Tab-Labels, Buttons, " +
@@ -121,7 +121,8 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         yield return new InstalledTab(game, _scanner, _installer, _paths, _host);
         yield return new NexusTab(_catalog, _covers, _downloader, _downloadBus,
             _mediaScraper, _host);
-        yield return new DownloadsTab(game, _pluginPaths, _zipInstaller, _downloadBus, _host);
+        yield return new DownloadsTab(game, _pluginPaths, _zipInstaller, _downloadBus,
+            _downloader, _covers, _mediaScraper, _host);
     }
 
     public Task ShutdownAsync()
@@ -214,14 +215,19 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         private readonly CyberpunkPaths _paths;
         private readonly CyberpunkZipInstaller _installer;
         private readonly DownloadEventBus _downloadBus;
+        private readonly CyberpunkDownloader _downloader;
+        private readonly CoverCache _covers;
+        private readonly NexusMediaScraper _mediaScraper;
         private readonly IHostServices _host;
 
         public DownloadsTab(DetectedGame game, CyberpunkPaths paths,
             CyberpunkZipInstaller installer, DownloadEventBus downloadBus,
-            IHostServices host)
+            CyberpunkDownloader downloader, CoverCache covers,
+            NexusMediaScraper mediaScraper, IHostServices host)
         {
             _game = game; _paths = paths; _installer = installer;
-            _downloadBus = downloadBus; _host = host;
+            _downloadBus = downloadBus; _downloader = downloader;
+            _covers = covers; _mediaScraper = mediaScraper; _host = host;
         }
 
         public string Id => "downloads";
@@ -233,7 +239,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
             new DownloadsView
             {
                 DataContext = new DownloadsViewModel(_game, _paths, _installer,
-                    _downloadBus, _host),
+                    _downloadBus, _host.Nexus, _downloader, _covers, _mediaScraper, _host),
             };
     }
 }
