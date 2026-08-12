@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using KroModIx.Plugin.Contracts;
@@ -14,13 +15,16 @@ namespace KroModIx.Plugin.Cyberpunk2077.Views;
 /// <see cref="CyberpunkPaths.DownloadsDir"/> (Premium-Direct-Downloads UND
 /// manuelle Browser-Downloads die der User dort ablegt). Pro Row: Install
 /// (Auto-Layout-Detection ins Game-Root), Löschen. Bulk: Alle
-/// installieren.</summary>
-public sealed partial class DownloadsViewModel : ObservableObject
+/// installieren. v0.5: subscribed <see cref="DownloadEventBus.DownloadsChanged"/>
+/// — Direct-Download aus dem Nexus-Tab landet sofort hier.</summary>
+public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
 {
     private readonly DetectedGame _game;
     private readonly CyberpunkPaths _paths;
     private readonly CyberpunkZipInstaller _installer;
+    private readonly DownloadEventBus _downloadBus;
     private readonly IHostServices _host;
+    private readonly EventHandler<string> _downloadsChangedHandler;
 
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private bool _isBusy;
@@ -28,13 +32,22 @@ public sealed partial class DownloadsViewModel : ObservableObject
     public ObservableCollection<DownloadRow> Rows { get; } = new();
 
     public DownloadsViewModel(DetectedGame game, CyberpunkPaths paths,
-        CyberpunkZipInstaller installer, IHostServices host)
+        CyberpunkZipInstaller installer, DownloadEventBus downloadBus,
+        IHostServices host)
     {
         _game = game;
         _paths = paths;
         _installer = installer;
+        _downloadBus = downloadBus;
         _host = host;
+        _downloadsChangedHandler = (_, _) => Dispatcher.UIThread.Post(Refresh);
+        _downloadBus.DownloadsChanged += _downloadsChangedHandler;
         Refresh();
+    }
+
+    public void Dispose()
+    {
+        _downloadBus.DownloadsChanged -= _downloadsChangedHandler;
     }
 
     [RelayCommand]
