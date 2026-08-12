@@ -171,6 +171,7 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
     {
         // Sequenziell mit 250 ms Pause zwischen den Downloads (Rate-Limit-
         // freundlich; 20 Rows × 250 ms = 5 s bis alle Cover da sind).
+        // Bitmap-Decode auf Background-Thread damit die UI nicht friert.
         foreach (var row in _all)
         {
             if (string.IsNullOrEmpty(row.Source.PictureUrl)) continue;
@@ -178,11 +179,12 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
             if (path is null) continue;
             try
             {
-                await Dispatcher.UIThread.InvokeAsync(() =>
+                var bmp = await Task.Run(() =>
                 {
                     using var s = File.OpenRead(path);
-                    row.Cover = new Bitmap(s);
+                    return new Bitmap(s);
                 });
+                await Dispatcher.UIThread.InvokeAsync(() => row.Cover = bmp);
             }
             catch (Exception ex)
             {

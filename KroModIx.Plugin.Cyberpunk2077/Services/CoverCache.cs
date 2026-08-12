@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Net.Http;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using KroModIx.Plugin.Contracts;
@@ -9,17 +8,23 @@ using NLog;
 
 namespace KroModIx.Plugin.Cyberpunk2077.Services;
 
-/// <summary>Persistenter Cover-Bild-Cache für Nexus-Mod-Rows im Katalog-
-/// Tab. Cache-Key basiert auf Nexus-<c>mod_id</c> (stabil — Nexus rotiert
-/// keine IDs), Extension aus dem URL (typisch <c>.jpg</c>, gelegentlich
-/// <c>.png</c>). 404 wird als leerer <c>.404</c>-Marker mit 7-Tage-TTL
-/// persistiert damit Recheck nicht bei jedem Refresh die API belastet.
-/// Siehe Skill-Reference <c>cover-cache.md</c>.</summary>
+/// <summary>Persistenter Cover-Bild-Cache fuer Nexus-Mod-Rows im Katalog-
+/// Tab UND fuer Screenshot-Thumbnails im Detail-Dialog. Cache-Key ist
+/// ein SHA1 der vollstaendigen URL — damit sind alle Bilder eindeutig
+/// getrennt, auch wenn sie zum selben Mod gehoeren. 404 wird als leerer
+/// <c>.404</c>-Marker mit 7-Tage-TTL persistiert damit Recheck nicht bei
+/// jedem Refresh die API belastet.
+///
+/// <para><b>v0.6.1-Fix:</b> zuvor war der Key <c>mod_&lt;id&gt;</c> aus
+/// einem Regex-Match auf <c>/mods/{id}/</c>. Nexus-CDN-URLs sind aber
+/// <c>.../mods/{gameId}/images/{modId}/...</c> — der Regex matchte die
+/// Game-ID (3333 fuer Cyberpunk 2077), nicht die Mod-ID. Alle Bilder aus
+/// demselben Game landeten unter demselben Cache-File → jedes Row-Cover
+/// und jeder Screenshot zeigte das gleiche Bild.</para></summary>
 public sealed class CoverCache
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
     private static readonly TimeSpan NegativeCacheTtl = TimeSpan.FromDays(7);
-    private static readonly Regex ModIdInUrl = new(@"/mods/(?<id>\d+)/", RegexOptions.Compiled);
 
     private readonly HttpClient _http;
     private readonly string _dir;
@@ -31,18 +36,16 @@ public sealed class CoverCache
         Directory.CreateDirectory(_dir);
     }
 
-    /// <summary>Kachel-Key: primaer die <c>mod_id</c> aus dem URL (stabil
-    /// egal welche CDN-Region), Fallback SHA1-hex. Im Cache-Dir landen
-    /// die Files als <c>mod_&lt;id&gt;.&lt;ext&gt;</c> — direkt lesbar
-    /// bei <c>ls</c>.</summary>
+    /// <summary>SHA1-Hex-Hash der vollstaendigen URL — kollisions-frei,
+    /// stabil (SHA1 einer festen URL ist immer dieselbe). Files landen
+    /// im Cache-Dir als <c>&lt;40-hex&gt;.&lt;ext&gt;</c>.</summary>
     public static string CacheKeyFor(string url)
     {
-        var m = ModIdInUrl.Match(url);
-        if (m.Success) return $"mod_{m.Groups["id"].Value}";
-        return "sha1_" + System.Security.Cryptography.SHA1
-            .HashData(System.Text.Encoding.UTF8.GetBytes(url))
-            .Aggregate(new System.Text.StringBuilder(), (sb, b) => sb.Append(b.ToString("x2")))
-            .ToString();
+        var bytes = System.Text.Encoding.UTF8.GetBytes(url);
+        var hash = System.Security.Cryptography.SHA1.HashData(bytes);
+        var sb = new System.Text.StringBuilder(40);
+        foreach (var b in hash) sb.Append(b.ToString("x2"));
+        return sb.ToString();
     }
 
     public string? TryGetCachedPath(string url)
