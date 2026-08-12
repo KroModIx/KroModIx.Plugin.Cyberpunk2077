@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "kroste.cyberpunk2077",
   "displayName": "Cyberpunk 2077 Mod-Manager",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "Kroste",
   "description": "Mod-Verwaltung für Cyberpunk 2077 (CD Projekt Red). Erkennt alle gängigen Mod-Typen: .archive-Assets (archive/pc/mod/), REDmods (offizielles CDPR-Modding-Framework), Cyber Engine Tweaks (CET Lua-Mods), RED4ext-Plugins (.dll) und redscript-Mods (.reds). Enable/Disable via Rename-Suffix, Bulk-Aktionen, Ordner öffnen. v0.1: Installiert-Tab (Katalog + Nexus-Integration folgen in v0.2+).",
   "assembly": "KroModIx.Plugin.Cyberpunk2077.dll",

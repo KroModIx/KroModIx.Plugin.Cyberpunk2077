@@ -42,6 +42,9 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
     private CyberpunkModInstallService? _installer;
     private CyberpunkNexusCatalog? _catalog;
     private CoverCache? _covers;
+    private CyberpunkPaths? _pluginPaths;
+    private CyberpunkDownloader? _downloader;
+    private CyberpunkZipInstaller? _zipInstaller;
 
     public Task InitializeAsync(IHostServices host,
         IReadOnlyList<DetectedGame> activatedGames, CancellationToken ct)
@@ -52,6 +55,10 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
         _installer = new CyberpunkModInstallService();
         _catalog = new CyberpunkNexusCatalog(host.Nexus);
         _covers = new CoverCache(host.CreateHttpClient("cyberpunk-covers"), host);
+        _pluginPaths = new CyberpunkPaths(host);
+        _downloader = new CyberpunkDownloader(host.Nexus,
+            host.CreateHttpClient("cyberpunk-downloads"), _pluginPaths);
+        _zipInstaller = new CyberpunkZipInstaller();
 
         foreach (var game in activatedGames)
         {
@@ -72,10 +79,12 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
     public IEnumerable<IGameTabContribution> GetTabContributions(DetectedGame game)
     {
         if (_host is null || _paths is null || _scanner is null || _installer is null
-            || _catalog is null || _covers is null)
+            || _catalog is null || _covers is null || _pluginPaths is null
+            || _downloader is null || _zipInstaller is null)
             yield break;
         yield return new InstalledTab(game, _scanner, _installer, _paths, _host);
         yield return new NexusTab(_catalog, _covers, _host);
+        yield return new DownloadsTab(game, _pluginPaths, _zipInstaller, _host);
     }
 
     public Task ShutdownAsync()
@@ -133,6 +142,31 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin
             new NexusView
             {
                 DataContext = new NexusViewModel(_catalog, _covers, _host.Nexus, _host),
+            };
+    }
+
+    private sealed class DownloadsTab : IGameTabContribution
+    {
+        private readonly DetectedGame _game;
+        private readonly CyberpunkPaths _paths;
+        private readonly CyberpunkZipInstaller _installer;
+        private readonly IHostServices _host;
+
+        public DownloadsTab(DetectedGame game, CyberpunkPaths paths,
+            CyberpunkZipInstaller installer, IHostServices host)
+        {
+            _game = game; _paths = paths; _installer = installer; _host = host;
+        }
+
+        public string Id => "downloads";
+        public string Label => "Downloads";
+        public string Icon => "\U0001F4E5"; // 📥
+        public int Order => 20;
+        public bool IsVisible(DetectedGame game) => true;
+        public Control CreateView(DetectedGame game, IHostServices host) =>
+            new DownloadsView
+            {
+                DataContext = new DownloadsViewModel(_game, _paths, _installer, _host),
             };
     }
 }
