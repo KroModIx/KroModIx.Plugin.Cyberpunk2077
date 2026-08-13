@@ -48,6 +48,22 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private bool _isPremium;
 
+    /// <summary>v0.10.0: Kategorie-Filter (client-side). „Alle Kategorien" ist
+    /// immer erste Option — sonst die unique <see cref="NexusCatalogEntry.Category"/>-
+    /// Werte aller geladenen Eintraege, alphabetisch sortiert. Rows werden
+    /// live gefiltert wenn sich die Auswahl aendert.</summary>
+    public ObservableCollection<string> Categories { get; } = new() { "" };
+
+    [ObservableProperty] private string? _selectedCategory = "";
+
+    partial void OnSelectedCategoryChanged(string? value) => ApplyCategoryFilter();
+
+    /// <summary>v0.10.0: Cover-Loading-Fortschritt fuer den Katalog-Header —
+    /// „Cover 12/40" waehrend der Nachlade-Loop laeuft. Leer wenn alle Cover
+    /// da sind. Nicht als Status-Zeile weil das Progress-Info vom eigentlichen
+    /// Status-Text (Suche/Sortierung) trennt.</summary>
+    [ObservableProperty] private string _coverProgressText = "";
+
     partial void OnIsPremiumChanged(bool value)
     {
         foreach (var row in Rows) row.IsPremium = value;
@@ -115,11 +131,58 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
 
     private void RebuildRowsFromCatalog()
     {
+        RefreshCategoryOptions();
         Rows.Clear();
+        var filter = SelectedCategory ?? "";
         foreach (var e in _catalog.Cached)
+        {
+            if (!string.IsNullOrEmpty(filter)
+                && !string.Equals(e.Category, filter, StringComparison.OrdinalIgnoreCase))
+                continue;
             Rows.Add(new NexusRow(e) { IsPremium = IsPremium });
+        }
         UpdateStatus();
         OnPropertyChanged(nameof(HasMore));
+    }
+
+    private void RefreshCategoryOptions()
+    {
+        var unique = _catalog.Cached
+            .Select(e => e.Category?.Trim() ?? "")
+            .Where(c => !string.IsNullOrEmpty(c))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        // „Alle Kategorien" = Empty-String an Index 0. UI-Label wird per
+        // Converter zu „Alle Kategorien" gemappt.
+        var desired = new List<string> { "" };
+        desired.AddRange(unique);
+        // Nur updaten wenn tatsaechlich neue Kategorien dazugekommen sind.
+        if (Categories.Count == desired.Count
+            && Categories.SequenceEqual(desired, StringComparer.OrdinalIgnoreCase)) return;
+        var preserve = SelectedCategory ?? "";
+        Categories.Clear();
+        foreach (var c in desired) Categories.Add(c);
+        if (Categories.Contains(preserve, StringComparer.OrdinalIgnoreCase))
+            SelectedCategory = preserve;
+        else
+            SelectedCategory = "";
+    }
+
+    private void ApplyCategoryFilter()
+    {
+        // Kein Reload — nur die Rows anhand des Katalog-Caches neu bauen.
+        Rows.Clear();
+        var filter = SelectedCategory ?? "";
+        foreach (var e in _catalog.Cached)
+        {
+            if (!string.IsNullOrEmpty(filter)
+                && !string.Equals(e.Category, filter, StringComparison.OrdinalIgnoreCase))
+                continue;
+            Rows.Add(new NexusRow(e) { IsPremium = IsPremium });
+        }
+        UpdateStatus();
+        _ = LoadCoversAsync(0);
     }
 
     private void UpdateStatus()
@@ -226,12 +289,21 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         {
             for (int i = startIndex; i < Rows.Count; i++) snapshot.Add(Rows[i]);
         });
+        var pending = snapshot.Count(r => r.Cover is null && !string.IsNullOrEmpty(r.Source.PictureUrl));
+        if (pending == 0)
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => CoverProgressText = "");
+            return;
+        }
+        int done = 0;
+        void UpdateProgress() => CoverProgressText = $"🖼 {done}/{pending}";
+        await Dispatcher.UIThread.InvokeAsync(UpdateProgress);
         foreach (var row in snapshot)
         {
             if (string.IsNullOrEmpty(row.Source.PictureUrl)) continue;
             if (row.Cover is not null) continue;
             var path = await _covers.GetOrDownloadCoverAsync(row.Source.PictureUrl);
-            if (path is null) continue;
+            if (path is null) { done++; await Dispatcher.UIThread.InvokeAsync(UpdateProgress); continue; }
             try
             {
                 var bmp = await Task.Run(() =>
@@ -239,14 +311,22 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
                     using var s = File.OpenRead(path);
                     return new Bitmap(s);
                 });
-                await Dispatcher.UIThread.InvokeAsync(() => row.Cover = bmp);
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    row.Cover = bmp;
+                    done++;
+                    UpdateProgress();
+                });
             }
             catch (Exception ex)
             {
                 _host.Logger.Debug(ex, "Cover-Bitmap-Load fuer {Id} fehlgeschlagen", row.Source.ModId);
+                done++;
+                await Dispatcher.UIThread.InvokeAsync(UpdateProgress);
             }
             await Task.Delay(150);
         }
+        await Dispatcher.UIThread.InvokeAsync(() => CoverProgressText = "");
     }
 
     [RelayCommand]

@@ -53,16 +53,42 @@ public sealed class NexusView : UserControl
             o is null ? null : new TextBlock { Text = o.Label }, true);
         ToolTip.SetTip(sortCombo, Strings.T("tooltip.sort"));
 
+        // v0.10.0: Kategorie-Combo — leerer String zu „Alle Kategorien" gemappt.
+        var catCombo = new ComboBox { Width = 200 };
+        catCombo.Bind(ComboBox.ItemsSourceProperty,
+            new Binding(nameof(NexusViewModel.Categories)));
+        catCombo.Bind(ComboBox.SelectedItemProperty,
+            new Binding(nameof(NexusViewModel.SelectedCategory)) { Mode = BindingMode.TwoWay });
+        catCombo.ItemTemplate = new FuncDataTemplate<string>((c, _) =>
+        {
+            var tb = new TextBlock();
+            tb.Text = string.IsNullOrEmpty(c) ? Strings.T("filter.all_categories") : c;
+            return tb;
+        }, true);
+        ToolTip.SetTip(catCombo, Strings.T("tooltip.category_filter"));
+
         var toolbar = new StackPanel
         {
             Orientation = Orientation.Horizontal, Spacing = 8,
             Margin = new Thickness(0, 0, 0, 8),
-            Children = { search, searchBtn, sortCombo, refreshBtn },
+            Children = { search, searchBtn, sortCombo, catCombo, refreshBtn },
         };
 
-        var status = new TextBlock { Margin = new Thickness(0, 0, 0, 8) };
+        // v0.10.0: Cover-Loading-Progress rechts vom Status („🖼 12/40")
+        var status = new TextBlock();
         status.Classes.Add("muted");
         status.Bind(TextBlock.TextProperty, new Binding(nameof(NexusViewModel.StatusText)));
+
+        var coverProgress = new TextBlock { Margin = new Thickness(12, 0, 0, 0) };
+        coverProgress.Classes.Add("muted");
+        coverProgress.Bind(TextBlock.TextProperty, new Binding(nameof(NexusViewModel.CoverProgressText)));
+
+        var statusRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 8),
+            Children = { status, coverProgress },
+        };
 
         var list = new ListBox
         {
@@ -108,7 +134,7 @@ public sealed class NexusView : UserControl
             Children =
             {
                 WithDock(toolbar, Dock.Top),
-                WithDock(status, Dock.Top),
+                WithDock(statusRow, Dock.Top),
                 scroll,
             },
         };

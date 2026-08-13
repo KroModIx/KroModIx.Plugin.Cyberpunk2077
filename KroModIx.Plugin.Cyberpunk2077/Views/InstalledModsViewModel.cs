@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media.Imaging;
@@ -33,6 +35,8 @@ public sealed partial class InstalledModsViewModel : ObservableObject
     private readonly NexusMediaScraper _mediaScraper;
     private readonly CoverCache _covers;
     private readonly InstallManifestStore _manifests;
+    private readonly CyberpunkUpdateChecker _updateChecker;
+    private readonly CyberpunkZipInstaller _zipInstaller;
     private readonly IHostServices _host;
 
     [ObservableProperty] private string _statusText = "";
@@ -47,6 +51,8 @@ public sealed partial class InstalledModsViewModel : ObservableObject
         INexusService nexus, CyberpunkDownloader downloader,
         DownloadEventBus downloadBus, NexusMediaScraper mediaScraper,
         CoverCache covers, InstallManifestStore manifests,
+        CyberpunkUpdateChecker updateChecker,
+        CyberpunkZipInstaller zipInstaller,
         IHostServices host)
     {
         _game = game;
@@ -59,6 +65,8 @@ public sealed partial class InstalledModsViewModel : ObservableObject
         _mediaScraper = mediaScraper;
         _covers = covers;
         _manifests = manifests;
+        _updateChecker = updateChecker;
+        _zipInstaller = zipInstaller;
         _host = host;
         Refresh();
     }
@@ -102,6 +110,10 @@ public sealed partial class InstalledModsViewModel : ObservableObject
             // Async: Nexus-Enrichment (Cover + Meta) fuer alle Rows mit
             // NexusModId aus dem Install-Manifest.
             _ = EnrichRowsAsync(_allRows.ToArray());
+            // v0.10.0: parallel REDmod-Update-Discovery. Katalog ist ggf.
+            // schon geladen → billig; sonst holt _updateChecker.CheckAsync
+            // via RefreshAsync die erste Katalog-Seite.
+            _ = RefreshUpdatesAsync();
         }
         finally { IsBusy = false; }
     }
@@ -286,6 +298,184 @@ public sealed partial class InstalledModsViewModel : ObservableObject
         Refresh();
     }
 
+    /// <summary>v0.10.0: Retrofit — fuer eine Row ohne Nexus-Match ein
+    /// Install-Manifest anlegen. User klebt Nexus-URL oder tippt Mod-ID ein,
+    /// der Manifest-Store speichert dann permanent den Link. Ab dem naechsten
+    /// Refresh greifen Cover-Enrichment und (bei REDmods) Update-Check.</summary>
+    [RelayCommand]
+    private async Task AssignNexusMatchAsync(ModRow? row)
+    {
+        if (row is null) return;
+        var owner = (Avalonia.Application.Current?.ApplicationLifetime
+            as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+        var dialog = new NexusMatchDialog(row.Mod.Name);
+        if (owner is not null) await dialog.ShowDialog(owner);
+        else dialog.Show();
+        if (dialog.Result is not int modId) return;
+
+        // Manifest speichern — InstalledPaths = der eine bekannte Mod-Pfad
+        // (relativ zum InstallDir). Reicht fuer Enrichment; Uninstall via
+        // CyberpunkModInstallService.Uninstall greift eh auf Mod.Path direkt.
+        var rel = Path.GetRelativePath(_game.InstallDir, row.Mod.Path).Replace('\\', '/');
+        _manifests.Save(row.Mod.ManifestKey, new InstallManifest(
+            NexusModId: modId,
+            OriginalFilename: null,
+            InstalledAtUtc: DateTime.UtcNow,
+            InstalledPaths: new[] { rel }));
+        _host.Notifications.Notify(
+            string.Format(Strings.T("notify.nexus_match_saved"), modId),
+            NotificationLevel.Success);
+        Refresh();
+    }
+
+    /// <summary>v0.10.0: nach jedem Refresh + wann immer der Katalog frisch
+    /// ist gerufen — matcht installierte REDmods gegen den Nexus-Katalog und
+    /// setzt <see cref="ModRow.PendingUpdateModId"/>/<see cref="ModRow.PendingUpdateVersion"/>
+    /// auf den Rows fuer die ein neues File verfuegbar ist.</summary>
+    public async Task RefreshUpdatesAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            await _updateChecker.CheckAsync(_game, ct);
+            var lookup = _updateChecker.Pending
+                .ToDictionary(u => NormalizeName(u.InstalledName), u => u,
+                    StringComparer.OrdinalIgnoreCase);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                foreach (var row in _allRows)
+                {
+                    if (row.Mod.Type != CyberpunkModType.RedMod) continue;
+                    var key = NormalizeName(row.Mod.Name);
+                    if (!lookup.TryGetValue(key, out var cand)) continue;
+                    row.PendingUpdateModId = cand.NexusModId;
+                    row.PendingUpdateVersion = cand.NexusVersion;
+                    row.OnUpdateChanged();
+                }
+            });
+        }
+        catch (Exception ex) { _host.Logger.Debug(ex, "RefreshUpdatesAsync fehlgeschlagen"); }
+    }
+
+    private static string NormalizeName(string s) => s.Replace(" ", "").ToLowerInvariant();
+
+    /// <summary>v0.10.0: fuer eine Row mit PendingUpdate den primary File
+    /// downloaden und via ZipInstaller ins Game extrahieren. Danach Refresh
+    /// damit die neue Version im UI sichtbar wird.</summary>
+    [RelayCommand]
+    private async Task InstallUpdateAsync(ModRow? row)
+    {
+        if (row is null || row.PendingUpdateModId is not int modId) return;
+        if (!_nexus.IsPremium)
+        {
+            _host.Notifications.Notify(Strings.T("notify.premium_required"),
+                NotificationLevel.Warning);
+            return;
+        }
+        using var scope = _host.BeginProgress($"Update: {row.Mod.Name}");
+        scope.Report(0, Strings.T("notify.update_install_running"));
+        try
+        {
+            IsBusy = true;
+            var progress = new Progress<double>(f =>
+                scope.Report(f * 0.6, $"⬇ {(int)(f * 100)}%"));
+            var target = await _downloader.DownloadPrimaryAsync(modId, progress);
+            if (target is null)
+            {
+                _host.Notifications.Notify(Strings.T("notify.download_fail_check_log"),
+                    NotificationLevel.Error);
+                return;
+            }
+            scope.Report(0.7, "📥 Install …");
+            var result = _zipInstaller.Install(target, _game);
+            if (!result.Success)
+            {
+                _host.Notifications.Notify(
+                    Strings.T("notify.update_install_fail") + result.Message,
+                    NotificationLevel.Error);
+                return;
+            }
+            scope.Report(1.0, "OK");
+            _host.Notifications.Notify(
+                Strings.T("notify.update_install_ok") + $"{row.Mod.Name} → v{row.PendingUpdateVersion}",
+                NotificationLevel.Success);
+            _host.Logger.Info("Cyberpunk-Update installiert: {Name} ({N} Dateien)",
+                row.Mod.Name, result.InstalledPaths.Count);
+            Refresh();
+            _ = RefreshUpdatesAsync();
+            try { await _host.RequestUpdateBadgeRefreshAsync(); } catch { }
+        }
+        catch (Exception ex)
+        {
+            _host.Logger.Warn(ex, "Update-Install fehlgeschlagen: {Name}", row.Mod.Name);
+            _host.Notifications.Notify(
+                Strings.T("notify.update_install_fail") + ex.Message,
+                NotificationLevel.Error);
+        }
+        finally { IsBusy = false; }
+    }
+
+    /// <summary>v0.10.0: <c>redmod.exe deploy</c> nach REDmod-Install manuell
+    /// triggern. redmod.exe liegt im Game-Install unter tools/redmod/bin/.
+    /// Auf Linux: Hinweis dass der User das im Game-Menu (Settings → Mods →
+    /// Deploy) machen sollte — Proton-Invocation von redmod.exe hier waere
+    /// bruechig (Prefix-Path, Wine-Version-Kompatibilitaet, Prompt).</summary>
+    [RelayCommand]
+    private async Task RunRedmodDeployAsync()
+    {
+        var exe = Path.Combine(_game.InstallDir, "tools", "redmod", "bin", "redmod.exe");
+        if (!File.Exists(exe))
+        {
+            _host.Notifications.Notify(Strings.T("notify.redmod_exe_missing"),
+                NotificationLevel.Warning);
+            return;
+        }
+        if (!OperatingSystem.IsWindows())
+        {
+            _host.Notifications.Notify(
+                "Auf Linux: bitte im Game-Menu Settings → Mods → Deploy klicken " +
+                "(Proton-Invocation von redmod.exe waere hier zu bruechig).",
+                NotificationLevel.Info);
+            return;
+        }
+        var ok = await _host.Dialogs.ConfirmAsync(
+            Strings.T("dialog.redmod_deploy_title"),
+            Strings.T("dialog.redmod_deploy_msg"),
+            okLabel: Strings.T("dialog.redmod_deploy_ok"));
+        if (!ok) return;
+
+        using var scope = _host.BeginProgress("REDmod deploy");
+        scope.Report(0, Strings.T("notify.redmod_deploy_running"));
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = exe,
+                WorkingDirectory = _game.InstallDir,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            psi.ArgumentList.Add("deploy");
+            psi.ArgumentList.Add("-reportProgress");
+            psi.ArgumentList.Add($"-root={_game.InstallDir}");
+            using var proc = Process.Start(psi);
+            if (proc is null) throw new InvalidOperationException("Process.Start returned null");
+            await proc.WaitForExitAsync();
+            if (proc.ExitCode != 0)
+                throw new InvalidOperationException($"redmod.exe deploy exited with code {proc.ExitCode}");
+            _host.Notifications.Notify(Strings.T("notify.redmod_deploy_ok"),
+                NotificationLevel.Success);
+        }
+        catch (Exception ex)
+        {
+            _host.Logger.Warn(ex, "REDmod deploy fehlgeschlagen");
+            _host.Notifications.Notify(
+                Strings.T("notify.redmod_deploy_fail") + ex.Message,
+                NotificationLevel.Error);
+        }
+    }
+
     /// <summary>Bulk-Enable aller deaktivierten Mods.</summary>
     [RelayCommand]
     private async Task EnableAllAsync()
@@ -365,6 +555,25 @@ public sealed partial class ModRow : ObservableObject
     public bool HasCover => Cover is not null;
     public bool HasNexusMatch => Mod.NexusModId is not null;
     public bool HasSummary => !string.IsNullOrWhiteSpace(NexusSummary);
+    /// <summary>v0.10.0: Retrofit-Button ist sichtbar wenn kein Manifest da
+    /// ist. Nutzt Nicht-HasNexusMatch statt einer eigenen Property um in
+    /// XAML/Bindings ohne Converter auszukommen.</summary>
+    public bool NeedsNexusRetrofit => Mod.NexusModId is null;
+
+    /// <summary>v0.10.0: gesetzt vom UpdateChecker wenn eine neuere Nexus-
+    /// Version verfuegbar ist. Rendert den ⬆-Button auf der Row.</summary>
+    public int? PendingUpdateModId { get; set; }
+    public string? PendingUpdateVersion { get; set; }
+    public bool HasPendingUpdate => PendingUpdateModId is not null;
+    public string UpdateButtonLabel => PendingUpdateVersion is null
+        ? Strings.T("btn.install_update")
+        : $"⬆  v{PendingUpdateVersion}";
+
+    public void OnUpdateChanged()
+    {
+        OnPropertyChanged(nameof(HasPendingUpdate));
+        OnPropertyChanged(nameof(UpdateButtonLabel));
+    }
 
     /// <summary>Callback aus dem VM nach externem Mod-Change (Toggle) —
     /// triggert PropertyChanged für alle Compute-Properties.</summary>

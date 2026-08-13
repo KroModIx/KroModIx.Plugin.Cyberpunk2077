@@ -20,9 +20,12 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.9.0",
+        Version: "0.10.0",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert / Nexus-Katalog / Downloads. " +
+            "v0.10: Update-Install pro Row (nur REDmods, ⬆-Button mit Zielversion), " +
+            "⚙ REDmod-Deploy-Trigger in der Toolbar (redmod.exe deploy, Windows-nativ), " +
+            "Client-side Kategorie-Filter im Nexus-Katalog, Cover-Loading-Progress im Header. " +
             "v0.8: DE+EN-Uebersetzung aller User-facing Strings (Tab-Labels, Buttons, " +
             "Statusmeldungen, Notifications, Dialoge) ueber Strings.T(). " +
             "v0.7: Voll-Katalog via Nexus-GraphQL (~23000 Cyberpunk-Mods verfuegbar), " +
@@ -124,7 +127,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
             yield break;
         yield return new InstalledTab(game, _scanner, _installer, _paths,
             _host.Nexus, _downloader, _downloadBus, _mediaScraper, _covers,
-            _manifests, _host);
+            _manifests, _updateChecker!, _zipInstaller, _host);
         yield return new NexusTab(_catalog, _covers, _downloader, _downloadBus,
             _mediaScraper, _host);
         yield return new DownloadsTab(game, _pluginPaths, _zipInstaller, _downloadBus,
@@ -168,6 +171,8 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         private readonly NexusMediaScraper _mediaScraper;
         private readonly CoverCache _covers;
         private readonly InstallManifestStore _manifests;
+        private readonly CyberpunkUpdateChecker _updateChecker;
+        private readonly CyberpunkZipInstaller _zipInstaller;
         private readonly IHostServices _host;
 
         public InstalledTab(DetectedGame game, CyberpunkModScanner scanner,
@@ -175,12 +180,15 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
             INexusService nexus, CyberpunkDownloader downloader,
             DownloadEventBus downloadBus, NexusMediaScraper mediaScraper,
             CoverCache covers, InstallManifestStore manifests,
+            CyberpunkUpdateChecker updateChecker, CyberpunkZipInstaller zipInstaller,
             IHostServices host)
         {
             _game = game; _scanner = scanner; _installer = installer;
             _paths = paths; _nexus = nexus; _downloader = downloader;
             _downloadBus = downloadBus; _mediaScraper = mediaScraper;
-            _covers = covers; _manifests = manifests; _host = host;
+            _covers = covers; _manifests = manifests;
+            _updateChecker = updateChecker; _zipInstaller = zipInstaller;
+            _host = host;
         }
 
         public string Id => "installed";
@@ -194,7 +202,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
             {
                 DataContext = new InstalledModsViewModel(_game, _scanner, _installer,
                     _paths, _nexus, _downloader, _downloadBus, _mediaScraper,
-                    _covers, _manifests, _host),
+                    _covers, _manifests, _updateChecker, _zipInstaller, _host),
             };
     }
 

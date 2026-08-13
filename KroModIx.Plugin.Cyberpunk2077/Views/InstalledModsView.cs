@@ -34,11 +34,16 @@ public sealed class InstalledModsView : UserControl
         disableAllBtn.Bind(Button.CommandProperty,
             new Binding(nameof(InstalledModsViewModel.DisableAllCommand)));
 
+        var redmodBtn = new Button { Content = Strings.T("btn.redmod_deploy") };
+        redmodBtn.Classes.Add("accent");
+        redmodBtn.Bind(Button.CommandProperty,
+            new Binding(nameof(InstalledModsViewModel.RunRedmodDeployCommand)));
+
         var toolbar = new StackPanel
         {
             Orientation = Orientation.Horizontal, Spacing = 8,
             Margin = new Thickness(0, 0, 0, 8),
-            Children = { refreshBtn, openBtn, enableAllBtn, disableAllBtn },
+            Children = { refreshBtn, openBtn, enableAllBtn, disableAllBtn, redmodBtn },
         };
 
         // --- Status + Filter ---
@@ -165,6 +170,21 @@ public sealed class InstalledModsView : UserControl
         BindRowCommand(detailBtn, nameof(InstalledModsViewModel.ShowDetailCommand));
         detailBtn.Bind(Button.IsEnabledProperty, new Binding(nameof(ModRow.HasNexusMatch)));
 
+        // v0.10.0: Retrofit-Button — nur sichtbar wenn KEIN Nexus-Match. Klick
+        // oeffnet Dialog, User klebt URL/ID, Manifest wird geschrieben.
+        var assignBtn = new Button { Content = Strings.T("btn.assign_nexus") };
+        assignBtn.Classes.Add("ghost");
+        BindRowCommand(assignBtn, nameof(InstalledModsViewModel.AssignNexusMatchCommand));
+        assignBtn.Bind(Button.IsVisibleProperty, new Binding(nameof(ModRow.NeedsNexusRetrofit)));
+
+        // v0.10.0: Update-Button, nur sichtbar wenn UpdateChecker eine neue
+        // Version fuer diese Row erkannt hat. Label enthaelt die Zielversion.
+        var updateBtn = new Button();
+        updateBtn.Classes.Add("accent");
+        updateBtn.Bind(Button.ContentProperty, new Binding(nameof(ModRow.UpdateButtonLabel)));
+        updateBtn.Bind(Button.IsVisibleProperty, new Binding(nameof(ModRow.HasPendingUpdate)));
+        BindRowCommand(updateBtn, nameof(InstalledModsViewModel.InstallUpdateCommand));
+
         var uninstallBtn = new Button { Content = Strings.T("btn.uninstall") };
         uninstallBtn.Classes.Add("danger");
         BindRowCommand(uninstallBtn, nameof(InstalledModsViewModel.UninstallCommand));
@@ -173,7 +193,7 @@ public sealed class InstalledModsView : UserControl
         {
             Spacing = 6,
             VerticalAlignment = VerticalAlignment.Center,
-            Children = { toggleBtn, detailBtn, uninstallBtn },
+            Children = { toggleBtn, updateBtn, detailBtn, assignBtn, uninstallBtn },
         };
 
         var grid = new Grid
