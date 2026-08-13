@@ -10,7 +10,25 @@ Erkennt alle fünf gängigen Cyberpunk-Mod-Typen, Voll-Katalog vom Nexus mit
 Pagination und Server-Search, Detail-Dialog mit Screenshot-Galerie und
 KI-Zusammenfassung, ZIP/RAR/7z-Auto-Install, DE+EN-UI.
 
-## Features (v0.9)
+## Features (v0.10)
+
+### Neu in v0.10.0
+- **Update-Install pro Row** (nur REDmods) — der Update-Checker matcht
+  installierte REDmods gegen den Nexus-Katalog, Rows mit neuerer Version
+  bekommen einen `⬆ vX.Y.Z`-Button. Klick lädt das primary File, installiert
+  via ZIP-Installer, refresht. Nur für Premium-Nexus-Accounts (Direct-Download
+  ist Premium-only).
+- **REDmod-Deployment-Trigger** — `⚙ REDmod deploy`-Button in der Toolbar
+  ruft `redmod.exe deploy` (nur Windows-nativ; auf Linux Hinweis auf das
+  In-Game-Menu Settings → Mods → Deploy).
+- **Client-side Kategorie-Filter** im Nexus-Katalog — Combo neben Sort,
+  Kategorien werden live aus den geladenen Einträgen abgeleitet.
+- **Cover-Loading-Progress** im Katalog-Header (`🖼 12/40`) während der
+  Nachlade-Loop läuft.
+- **Retrofit-Dialog** (`🔗 Nexus-Match zuweisen`) für Mods ohne Install-
+  Manifest (installiert vor v0.9.0). Dialog parst Mod-URL oder Mod-ID und
+  schreibt ein Manifest — ab dem nächsten Refresh greifen Cover-Enrichment
+  und Update-Check.
 
 ### Installiert-Tab
 - **Discovery** aller fünf Mod-Typen (< 100 ms für 200 Mods):
