@@ -92,20 +92,14 @@ public sealed partial class NexusModDetailViewModel : ObservableObject
             {
                 var item = _rawScreenshots[i];
                 var idx = i;
-                var localPath = await _covers.GetOrDownloadCoverAsync(item.ThumbUrl);
-                if (localPath is null) continue;
-                Bitmap? bmp = null;
-                try
+                // v0.11.0: Bytes vom Cache holen, Decode via zentralem Host-
+                // Baukasten (kein manueller new Bitmap(Stream) mehr).
+                var bytes = await _covers.GetOrDownloadBytesAsync(item.ThumbUrl);
+                if (bytes is null) continue;
+                var bmp = await _host.Images.DecodeAsync(bytes);
+                if (bmp is null)
                 {
-                    bmp = await Task.Run(() =>
-                    {
-                        using var s = File.OpenRead(localPath);
-                        return new Bitmap(s);
-                    });
-                }
-                catch (Exception ex)
-                {
-                    _host.Logger.Debug(ex, "Screenshot-Thumb-Load fehlgeschlagen: {Url}", item.ThumbUrl);
+                    _host.Logger.Debug("Screenshot-Thumb-Decode fehlgeschlagen: {Url}", item.ThumbUrl);
                     continue;
                 }
                 await Dispatcher.UIThread.InvokeAsync(() =>

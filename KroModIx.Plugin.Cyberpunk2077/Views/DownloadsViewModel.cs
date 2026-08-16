@@ -130,21 +130,17 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
 
     private async Task LoadCoverAsync(DownloadRow row, string pictureUrl)
     {
-        var path = await _covers.GetOrDownloadCoverAsync(pictureUrl);
-        if (path is null) return;
-        try
+        // v0.11.0: Bytes vom Cache holen, Decode via zentralem Host-Baukasten
+        // (kein manueller new Bitmap(Stream) mehr).
+        var bytes = await _covers.GetOrDownloadBytesAsync(pictureUrl);
+        if (bytes is null) return;
+        var bmp = await _host.Images.DecodeAsync(bytes);
+        if (bmp is null)
         {
-            var bmp = await Task.Run(() =>
-            {
-                using var s = File.OpenRead(path);
-                return new Bitmap(s);
-            });
-            await Dispatcher.UIThread.InvokeAsync(() => row.Cover = bmp);
+            _host.Logger.Debug("Downloads-Cover-Decode fehlgeschlagen fuer mod_id={Id}", row.NexusModId);
+            return;
         }
-        catch (Exception ex)
-        {
-            _host.Logger.Debug(ex, "Downloads-Cover-Load fehlgeschlagen fuer mod_id={Id}", row.NexusModId);
-        }
+        await Dispatcher.UIThread.InvokeAsync(() => row.Cover = bmp);
     }
 
     [RelayCommand]

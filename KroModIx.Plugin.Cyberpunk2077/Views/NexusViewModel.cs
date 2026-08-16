@@ -302,28 +302,26 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         {
             if (string.IsNullOrEmpty(row.Source.PictureUrl)) continue;
             if (row.Cover is not null) continue;
-            var path = await _covers.GetOrDownloadCoverAsync(row.Source.PictureUrl);
-            if (path is null) { done++; await Dispatcher.UIThread.InvokeAsync(UpdateProgress); continue; }
-            try
+            // v0.11.0: Bytes downloaden (CoverCache) und via Host-Baukasten
+            // zu Avalonia-Bitmap decoden. Kein Bitmap-Ctor-Selbstbau mehr —
+            // WebP/AVIF/DDS-Fallbacks + Thread-Affinity werden vom Host
+            // erledigt.
+            var bytes = await _covers.GetOrDownloadBytesAsync(row.Source.PictureUrl);
+            if (bytes is null) { done++; await Dispatcher.UIThread.InvokeAsync(UpdateProgress); continue; }
+            var bmp = await _host.Images.DecodeAsync(bytes);
+            if (bmp is null)
             {
-                var bmp = await Task.Run(() =>
-                {
-                    using var s = File.OpenRead(path);
-                    return new Bitmap(s);
-                });
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    row.Cover = bmp;
-                    done++;
-                    UpdateProgress();
-                });
-            }
-            catch (Exception ex)
-            {
-                _host.Logger.Debug(ex, "Cover-Bitmap-Load fuer {Id} fehlgeschlagen", row.Source.ModId);
+                _host.Logger.Debug("Cover-Decode fuer {Id} fehlgeschlagen", row.Source.ModId);
                 done++;
                 await Dispatcher.UIThread.InvokeAsync(UpdateProgress);
+                continue;
             }
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                row.Cover = bmp;
+                done++;
+                UpdateProgress();
+            });
             await Task.Delay(150);
         }
         await Dispatcher.UIThread.InvokeAsync(() => CoverProgressText = "");

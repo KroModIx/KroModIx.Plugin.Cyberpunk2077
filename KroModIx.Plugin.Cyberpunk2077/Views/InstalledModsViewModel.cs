@@ -151,21 +151,17 @@ public sealed partial class InstalledModsViewModel : ObservableObject
 
     private async Task LoadCoverAsync(ModRow row, string pictureUrl)
     {
-        var path = await _covers.GetOrDownloadCoverAsync(pictureUrl);
-        if (path is null) return;
-        try
+        // v0.11.0: Bytes vom Cache holen, Decode via zentralem Host-Baukasten
+        // (WebP/AVIF/DDS-Fallback + Thread-Affinity werden vom Host erledigt).
+        var bytes = await _covers.GetOrDownloadBytesAsync(pictureUrl);
+        if (bytes is null) return;
+        var bmp = await _host.Images.DecodeAsync(bytes);
+        if (bmp is null)
         {
-            var bmp = await Task.Run(() =>
-            {
-                using var s = File.OpenRead(path);
-                return new Bitmap(s);
-            });
-            await Dispatcher.UIThread.InvokeAsync(() => row.Cover = bmp);
+            _host.Logger.Debug("Installiert-Cover-Decode fehlgeschlagen fuer mod_id={Id}", row.Mod.NexusModId);
+            return;
         }
-        catch (Exception ex)
-        {
-            _host.Logger.Debug(ex, "Installiert-Cover-Load fehlgeschlagen fuer mod_id={Id}", row.Mod.NexusModId);
-        }
+        await Dispatcher.UIThread.InvokeAsync(() => row.Cover = bmp);
     }
 
     /// <summary>Oeffnet den Nexus-Mod-Detail-Dialog fuer die Row. Nur moeglich

@@ -20,9 +20,11 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.10.0",
+        Version: "0.11.0",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert / Nexus-Katalog / Downloads. " +
+            "v0.11.0: Cover-Decode ueber Host-IImageDecoder-Baukasten (Contracts v1.18.0) — " +
+            "zentrale WebP/AVIF/DDS-Convert-Chain, Cover-Bug-Fixes an einer Stelle. " +
             "v0.10: Update-Install pro Row (nur REDmods, ⬆-Button mit Zielversion), " +
             "⚙ REDmod-Deploy-Trigger in der Toolbar (redmod.exe deploy, Windows-nativ), " +
             "Client-side Kategorie-Filter im Nexus-Katalog, Cover-Loading-Progress im Header. " +
@@ -35,7 +37,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
             "v0.5: Nexus-Detail-Dialog mit voller Beschreibung + KI-Zusammenfassung, " +
             "Premium-Direct-Download, Adult-Warning-Badge. " +
             "v0.4: Update-Discovery fuer REDmods + gruener ↑-Badge (IUpdateNotifier). " +
-            "Nutzt Host-Nexus-Baukasten (Contracts v1.15.0), MinHostVersion 1.15.0.");
+            "Nutzt Host-Nexus-Baukasten (Contracts v1.18.0), MinHostVersion 1.18.0.");
 
     public IReadOnlyList<GameTarget> Targets { get; } = new[]
     {

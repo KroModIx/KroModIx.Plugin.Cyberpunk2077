@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
 using Avalonia;
@@ -197,13 +196,17 @@ public sealed class ScreenshotViewerWindow : Window
         {
             using var http = _host.CreateHttpClient("cyberpunk-screenshot-viewer");
             var bytes = await http.GetByteArrayAsync(target);
-            // Bitmap-Decode auf einem Background-Thread, damit die UI beim
-            // Laden grosser 4K-Screenshots nicht friert.
-            var bmp = await Task.Run(() =>
+            // v0.11.0: Bitmap-Decode ueber zentralen Host-Baukasten. Der Host
+            // uebernimmt Thread-Affinity + Format-Fallback (WebP/AVIF/DDS —
+            // Nexus-CDN liefert Screenshots zunehmend als WebP).
+            var bmp = await _host.Images.DecodeAsync(bytes);
+            if (bmp is null)
             {
-                using var ms = new MemoryStream(bytes);
-                return new Bitmap(ms);
-            });
+                _host.Logger.Warn("Screenshot-Decode fehlgeschlagen: {Url}", target);
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                    _loading.Text = Strings.T("status.image_load_error"));
+                return;
+            }
             // Race: user hat schon weiter geklickt → das aktuelle FullUrl
             // wuerde nicht mehr matchen. Wenn ja, verwerfen.
             if (_screenshots[_index].FullUrl != target) return;
