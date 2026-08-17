@@ -27,4 +27,10 @@
   <ItemGroup>
     <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- v0.13.0: interne CollectFilesFor-Helper (IConflictSource) fuer den
+         Test-Suite zugaenglich machen, ohne die Signatur oeffentlich zu machen. -->
+    <InternalsVisibleTo Include="KroModIx.Plugin.Cyberpunk2077.Tests" />
+  </ItemGroup>
 </Project>

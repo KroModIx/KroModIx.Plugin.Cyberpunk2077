@@ -1,6 +1,12 @@
 <Project>
   <ItemGroup>
-    <!-- v1.21.0: IDescriptionParser.ToHtml + CreateRichView — HtmlRenderer-
+    <!-- v1.24.0: IConflictScanner + IConflictSource — zentraler Konflikt-
+         Baukasten. Plugins liefern on-demand ihre Mod->Files-Karte, Host
+         aggregiert und findet Files mit > 1 Owner. Cyberpunk als Referenz-
+         Plugin: alle 5 Mod-Typen (Archive/REDmod/CET/RED4ext/Redscript)
+         werden gemapped. Wir pinnen 1.24.1 (Host-Hotfix aus dem gleichen
+         Sprint, keine Contracts-Semantik geaendert).
+         v1.21.0: IDescriptionParser.ToHtml + CreateRichView — HtmlRenderer-
          basierter Rich-HTML-Renderer fuer BBCode/HTML-Descriptions
          (Avalonia.HtmlRenderer). Ersetzt Plain-Text-TextBlock im Detail-Dialog.
          v1.20.0: IHostServices.Descriptions (IDescriptionParser) — zentraler
@@ -10,7 +16,7 @@
          Baukasten. Rohbytes rein, Avalonia-Bitmap raus; WebP/AVIF/DDS-Fallbacks
          und Thread-Affinity erledigt der Host. v1.15.0: INexusService.SearchModsAsync
          fuer GraphQL-basierten Voll-Katalog-Browse mit Pagination + Server-Search. -->
-    <PackageVersion Include="KroModIx.Plugin.Contracts" Version="1.21.0" />
+    <PackageVersion Include="KroModIx.Plugin.Contracts" Version="1.24.1" />
     <PackageVersion Include="Avalonia" Version="12.1.0" />
     <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <!-- v0.8.1: SharpCompress fuer ZIP/RAR/7z-Support im Downloads-Tab. -->

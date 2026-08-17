@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
@@ -15,14 +17,20 @@ namespace KroModIx.Plugin.Cyberpunk2077;
 /// File-/Directory-Delete, Bulk-Aktionen.
 ///
 /// <para>Nexus-Katalog + Update-Discovery kommen in v0.2+ (analog Icarus).</para></summary>
-public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
+public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier, IConflictSource
 {
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.12.2",
+        Version: "0.13.0",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert / Nexus-Katalog / Downloads. " +
+            "v0.13.0: IConflictSource-Implementierung (Contracts v1.24.0) — meldet fuer " +
+            "jeden installierten Mod (Archive/REDmod/CET/RED4ext/Redscript) die relativen " +
+            "Dateien an den zentralen Host-Konflikt-Scanner. Damit erscheinen Mod-Overlaps " +
+            "(z.B. zwei .archive-Files gleichen Namens, doppelte REDmod-Ordner) im neuen " +
+            "„⚠ Konflikte pruefen…\"-Fenster in der Sidebar. Referenz-Migration fuer den " +
+            "v1.24-Baukasten. MinHostVersion 1.24.0. " +
             "v0.12.2: Manifest-GC im UpdateChecker — verwaiste Install-Manifests " +
             "(Mod-Datei/Ordner manuell geloescht, JSON blieb liegen) werden vor dem " +
             "Update-Vergleich garbage-collectet. Kein Phantom-Update-Badge mehr fuer " +
@@ -46,8 +54,8 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
             "v0.5: Nexus-Detail-Dialog mit voller Beschreibung + KI-Zusammenfassung, " +
             "Premium-Direct-Download, Adult-Warning-Badge. " +
             "v0.4: Update-Discovery fuer REDmods + gruener ↑-Badge (IUpdateNotifier). " +
-            "Nutzt Host-Description-Parser mit Rich-HTML-Renderer (Contracts v1.21.0), " +
-            "MinHostVersion 1.21.0.");
+            "Nutzt Host-Konflikt-Scanner-Baukasten (Contracts v1.24.0), " +
+            "MinHostVersion 1.24.0.");
 
     public IReadOnlyList<GameTarget> Targets { get; } = new[]
     {
@@ -191,6 +199,139 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
             .Select(g => new GameUpdateInfo(g.Target.SteamAppId!.Value, count, summary))
             .ToList();
         return Task.FromResult<IReadOnlyList<GameUpdateInfo>>(infos);
+    }
+
+    // ---- IConflictSource (Contracts v1.24.0+) ----
+    //
+    // Liefert on-demand alle installierten Mods dieses Plugins mit ihren
+    // relativen Dateien an den Host-IConflictScanner. Der Host aggregiert
+    // ueber alle Plugins die IConflictSource implementieren und findet
+    // Files mit > 1 Owner (case-insensitive, Slash-Normalisierung erledigt
+    // der Host — wir liefern trotzdem schon '/'-normalisiert weil das die
+    // Debug-Logs lesbarer macht).
+    //
+    // Design-Entscheidung: WIR LISTEN AUCH .disabled-MODS. Grund: der User
+    // ist gerade beim Ein-/Ausschalten und will potenzielle Konflikte
+    // vorab sehen. Die Konflikt-UI zeigt Owner-Namen mit [Type]-Suffix,
+    // dort ist implizit sichtbar was gerade aktiv ist (Enable/Disable
+    // steuert der User im Installiert-Tab).
+    public async Task<IReadOnlyList<ModFileset>> GetOwnedFilesAsync(
+        string gameKey, CancellationToken cancellationToken = default)
+    {
+        // Off-UI-Thread — Directory.EnumerateFiles(SearchOption.AllDirectories)
+        // kann bei grossen REDmod-Ordnern rechenintensiv werden.
+        await Task.Yield();
+
+        if (_scanner is null || _activatedGames.Count == 0)
+            return Array.Empty<ModFileset>();
+
+        // Der Host baut den gameKey aus SteamAppId ("steam:1091500") bzw. bei
+        // Manual-Games aus einer plugin-nicht-sichtbaren ManualId. Cyberpunk
+        // hat eine feste SteamAppId und ist im offiziellen Setup Steam-only —
+        // wir matchen ausschliesslich ueber "steam:<appId>". Manual-Adds mit
+        // beliebigen Ids bleiben aussen vor (kein Owner in der Konflikt-UI —
+        // waere ohnehin exotisch fuer CP2077).
+        var game = _activatedGames.FirstOrDefault(g =>
+            g.Target.SteamAppId is int appId
+            && string.Equals(gameKey, $"steam:{appId}", StringComparison.OrdinalIgnoreCase));
+        if (game is null)
+            return Array.Empty<ModFileset>();
+
+        var result = new List<ModFileset>();
+        IReadOnlyList<CyberpunkMod> mods;
+        try
+        {
+            mods = _scanner.ScanAll(game);
+        }
+        catch (Exception ex)
+        {
+            _host?.Logger.Warn(ex, "Cyberpunk IConflictSource: ScanAll fehlgeschlagen fuer {Dir}", game.InstallDir);
+            return Array.Empty<ModFileset>();
+        }
+
+        foreach (var mod in mods)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var files = CollectFilesFor(mod, game.InstallDir);
+                if (files.Count == 0) continue;
+                var display = $"{mod.Name} [{mod.TypeLabel}]";
+                result.Add(new ModFileset(mod.ManifestKey, display, files));
+            }
+            catch (Exception ex)
+            {
+                _host?.Logger.Debug(ex, "Cyberpunk IConflictSource: File-Collect fuer {Mod} fehlgeschlagen", mod.Name);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Sammelt die Files eines <see cref="CyberpunkMod"/> als
+    /// relative, '/'-normalisierte Pfade unter <paramref name="installDir"/>.
+    /// Sondermuenzen:
+    /// <list type="bullet">
+    /// <item>Archive: `.archive`-Datei + optionaler `.archive.xl`-Sidecar.</item>
+    /// <item>REDmod/CET/RED4ext: Ordner rekursiv.</item>
+    /// <item>Redscript: Datei ODER Ordner (beide Layouts moeglich).</item>
+    /// </list>
+    /// Fuer disabled-Mods (Path enthaelt `.disabled`) werden die Files
+    /// trotzdem gelistet — der Konflikt ist echt sobald User re-enabled.</summary>
+    internal static IReadOnlyList<string> CollectFilesFor(CyberpunkMod mod, string installDir)
+    {
+        var list = new List<string>();
+
+        switch (mod.Type)
+        {
+            case CyberpunkModType.Archive:
+                if (File.Exists(mod.Path))
+                {
+                    AddRelative(list, installDir, mod.Path);
+                    // .archive.xl-Sidecar (ArchiveXL-Companion-File)
+                    var xl = mod.Path + ".xl";
+                    if (File.Exists(xl)) AddRelative(list, installDir, xl);
+                    // Wenn das Archive selbst .disabled ist, den Sidecar-
+                    // Pfad ohne .disabled auch checken (User re-enabled ggf.
+                    // beides zusammen).
+                    if (mod.Path.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var stripped = mod.Path[..^".disabled".Length];
+                        var xlStripped = stripped + ".xl";
+                        if (File.Exists(xlStripped)) AddRelative(list, installDir, xlStripped);
+                    }
+                }
+                break;
+
+            case CyberpunkModType.Redscript:
+                // Zwei Layouts: einzelne .reds-Datei ODER Ordner mit .reds drin.
+                if (File.Exists(mod.Path))
+                    AddRelative(list, installDir, mod.Path);
+                else if (Directory.Exists(mod.Path))
+                    AddDirectoryRecursive(list, installDir, mod.Path);
+                break;
+
+            case CyberpunkModType.RedMod:
+            case CyberpunkModType.CyberEngineTweaks:
+            case CyberpunkModType.Red4Ext:
+                if (Directory.Exists(mod.Path))
+                    AddDirectoryRecursive(list, installDir, mod.Path);
+                break;
+        }
+        return list;
+    }
+
+    private static void AddDirectoryRecursive(List<string> list, string installDir, string dir)
+    {
+        foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+            AddRelative(list, installDir, file);
+    }
+
+    private static void AddRelative(List<string> list, string installDir, string absolutePath)
+    {
+        var rel = Path.GetRelativePath(installDir, absolutePath).Replace('\\', '/');
+        // Paranoid: Pfade die aus dem InstallDir raus zeigen (`..`) verwerfen.
+        if (rel.StartsWith("..", StringComparison.Ordinal)) return;
+        list.Add(rel);
     }
 
     private sealed class InstalledTab : IGameTabContribution
