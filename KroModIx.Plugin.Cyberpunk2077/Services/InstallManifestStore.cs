@@ -90,6 +90,23 @@ public sealed class InstallManifestStore
         try { if (File.Exists(path)) File.Delete(path); }
         catch (Exception ex) { Log.Debug(ex, "InstallManifest-Delete fehlgeschlagen: {Path}", path); }
     }
+
+    /// <summary>v0.12.2: Alle persistierten Manifests laden (Key = Dateiname
+    /// ohne <c>.json</c>). Wird vom <see cref="CyberpunkUpdateChecker"/> fuer
+    /// den Manifest-GC-Pass genutzt (verwaiste Eintraege loeschen, wenn die
+    /// Mod-Datei nicht mehr existiert). Unlesbare Files werden geskippt.</summary>
+    public IReadOnlyList<(string Key, InstallManifest Manifest)> LoadAll()
+    {
+        if (!Directory.Exists(_dir)) return Array.Empty<(string, InstallManifest)>();
+        var list = new List<(string, InstallManifest)>();
+        foreach (var f in Directory.EnumerateFiles(_dir, "*.json"))
+        {
+            var key = Path.GetFileNameWithoutExtension(f);
+            var m = TryGet(key);
+            if (m is not null) list.Add((key, m));
+        }
+        return list;
+    }
 }
 
 /// <summary>Manifest-Payload — persistiert pro installiertem Mod. Fields

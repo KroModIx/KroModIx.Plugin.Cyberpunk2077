@@ -28,15 +28,27 @@ public sealed class CyberpunkUpdateChecker
 
     private readonly CyberpunkModScanner _scanner;
     private readonly CyberpunkNexusCatalog _catalog;
+    private readonly InstallManifestStore? _manifests;
 
     private IReadOnlyList<UpdateCandidate> _pending = Array.Empty<UpdateCandidate>();
     private DateTime _lastCheckUtc;
 
-    public CyberpunkUpdateChecker(CyberpunkModScanner scanner, CyberpunkNexusCatalog catalog)
+    public CyberpunkUpdateChecker(CyberpunkModScanner scanner, CyberpunkNexusCatalog catalog,
+        InstallManifestStore? manifests = null)
     {
         _scanner = scanner;
         _catalog = catalog;
+        _manifests = manifests;
     }
+
+    /// <summary>v0.12.2: Callback der die aktuell physisch installierten
+    /// Manifest-Keys liefert (BuildKey pro <see cref="CyberpunkMod"/>). Der
+    /// Checker garbage-collectet verwaiste Manifests (User hat die Mod-Datei
+    /// / den Ordner manuell geloescht, Manifest blieb liegen → Phantom-
+    /// Update-Badge sobald die REDmod-Version zufaellig im Nexus-Katalog
+    /// weiterlebt). Wenn null gelassen, wird nicht gefiltert
+    /// (Rueckwaerts-Kompatibilitaet mit v0.12.1-Callsites).</summary>
+    public Func<HashSet<string>>? InstalledKeysProvider { get; set; }
 
     public IReadOnlyList<UpdateCandidate> Pending => _pending;
     public int PendingCount => _pending.Count;
@@ -57,6 +69,26 @@ public sealed class CyberpunkUpdateChecker
         {
             _pending = Array.Empty<UpdateCandidate>();
             return 0;
+        }
+
+        // v0.12.2: verwaiste Manifests garbagen (Mod-Datei/Ordner nicht mehr
+        // da). Ohne das bleiben Test-Installs / manuelle Deletes ewig im
+        // Store und koennen Phantom-Enrichment (NexusModId auf frisch
+        // rein-kopierten Mods gleichen Namens) triggern. Optional, greift
+        // nur wenn Provider gesetzt UND Store injiziert wurde.
+        if (_manifests is not null && InstalledKeysProvider is { } provider)
+        {
+            try
+            {
+                var installedKeys = provider();
+                foreach (var (key, _) in _manifests.LoadAll())
+                {
+                    if (installedKeys.Contains(key)) continue;
+                    Log.Info("Manifest-GC: verwaistes Install-Manifest '{Key}' geloescht (Mod nicht mehr installiert)", key);
+                    _manifests.Delete(key);
+                }
+            }
+            catch (Exception ex) { Log.Debug(ex, "Manifest-GC-Pass fehlgeschlagen"); }
         }
 
         var installed = _scanner.ScanAll(game)

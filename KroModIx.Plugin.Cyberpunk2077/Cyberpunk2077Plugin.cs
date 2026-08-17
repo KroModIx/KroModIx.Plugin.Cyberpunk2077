@@ -20,9 +20,13 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.cyberpunk2077",
         DisplayName: "Cyberpunk 2077 Mod-Manager",
-        Version: "0.12.1",
+        Version: "0.12.2",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Cyberpunk 2077 — Installiert / Nexus-Katalog / Downloads. " +
+            "v0.12.2: Manifest-GC im UpdateChecker — verwaiste Install-Manifests " +
+            "(Mod-Datei/Ordner manuell geloescht, JSON blieb liegen) werden vor dem " +
+            "Update-Vergleich garbage-collectet. Kein Phantom-Update-Badge mehr fuer " +
+            "nicht mehr installierte REDmods. " +
             "v0.12.1: Detail-Dialog rendert Rich-HTML via _host.Descriptions.CreateRichView " +
             "(Host v1.21 HtmlRenderer-Baukasten) — Bold/Italic/Farben/Bilder/Listen inline sichtbar. " +
             "Plain-Text bleibt fuer KI-Prompts. " +
@@ -89,7 +93,29 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier
         _downloader = new CyberpunkDownloader(host.Nexus,
             host.CreateHttpClient("cyberpunk-downloads"), _pluginPaths);
         _zipInstaller = new CyberpunkZipInstaller(_manifests);
-        _updateChecker = new CyberpunkUpdateChecker(_scanner, _catalog);
+        _updateChecker = new CyberpunkUpdateChecker(_scanner, _catalog, _manifests);
+        // v0.12.2: dem UpdateChecker die Liste aktuell installierter Mods
+        // liefern — er garbage-collectet damit verwaiste Manifests (User
+        // hat REDmod-Ordner / Archive-Datei manuell geloescht, Manifest
+        // blieb liegen → Phantom-Update-Badge). Cyberpunk hat 5 Mod-Typen
+        // (Archive/REDmod/CET/RED4ext/redscript) — ScanAll liefert alle,
+        // ManifestKey wird pro Mod korrekt gebildet (Type + Name), also
+        // matcht der Schluessel eins-zu-eins mit dem was der Installer
+        // beim Save schreibt.
+        _updateChecker.InstalledKeysProvider = () =>
+        {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var g in _activatedGames)
+            {
+                try
+                {
+                    foreach (var mod in _scanner.ScanAll(g))
+                        keys.Add(mod.ManifestKey);
+                }
+                catch (Exception ex) { host.Logger.Debug(ex, "Scan fuer Manifest-GC fehlgeschlagen: {Dir}", g.InstallDir); }
+            }
+            return keys;
+        };
         _downloadBus = new DownloadEventBus();
         _mediaScraper = new NexusMediaScraper(host.CreateHttpClient("cyberpunk-nexus-scrape"));
         _activatedGames = activatedGames;
