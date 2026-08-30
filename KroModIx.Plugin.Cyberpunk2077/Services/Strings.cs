@@ -111,6 +111,7 @@ public static class Strings
         ["status.load_more_error"] = "Load-More-Fehler: ",
         ["status.mods_of"] = "{0} von {1} Mods geladen",
         ["status.mods_count"] = "{0} Mods",
+        ["status.reading_mods"] = "Mods werden gelesen …",
         ["status.search_hint"] = " — Suche '{0}'",
 
         // Row / mod meta
@@ -241,6 +242,7 @@ public static class Strings
         ["status.load_more_error"] = "Load-More error: ",
         ["status.mods_of"] = "{0} of {1} mods loaded",
         ["status.mods_count"] = "{0} mods",
+        ["status.reading_mods"] = "Reading mods …",
         ["status.search_hint"] = " — search '{0}'",
 
         ["row.status_active"] = "active",

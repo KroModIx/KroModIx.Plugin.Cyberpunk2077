@@ -85,37 +85,70 @@ public sealed partial class InstalledModsViewModel : ObservableObject
         foreach (var r in matched) Rows.Add(r);
     }
 
+    /// <summary>Sync-Wrapper — der eigentliche Scan laeuft off-UI-Thread.
+    ///
+    /// <para>v0.13.1: vorher lief hier alles synchron, und der Ctor ruft das
+    /// direkt auf. <c>_scanner.ScanAll</c> ist aber kein billiger Aufruf:
+    /// fuenf Verzeichnis-Scans (archive/, REDmod/, CET/, RED4ext/,
+    /// redscript/) plus ein <c>File.ReadAllText</c> pro gefundenem Mod fuer
+    /// das Install-Manifest. Bei einer gewachsenen Cyberpunk-Installation
+    /// friert damit die ganze App-Sidebar ein, sobald der Installiert-Tab
+    /// gebaut wird (Kernprinzip 3 / LS25-v1.8.1-Muster).</para>
+    ///
+    /// <para>Signatur bleibt sync, damit alle Callsites und das
+    /// RelayCommand-Binding unveraendert bleiben. Sofort-Feedback via
+    /// StatusText, Rows werden nach dem Scan auf dem UI-Thread
+    /// materialisiert.</para></summary>
     [RelayCommand]
     private void Refresh()
     {
-        try
+        IsBusy = true;
+        StatusText = Strings.T("status.reading_mods");
+        _ = Task.Run(() =>
         {
-            IsBusy = true;
-            if (!_paths.LooksLikeCyberpunkInstall(_game))
+            List<ModRow> rows;
+            string status;
+            try
             {
-                StatusText = $"Kein Cyberpunk-Layout unter: {_game.InstallDir}";
-                _allRows = new();
-                Rows.Clear();
-                return;
+                if (!_paths.LooksLikeCyberpunkInstall(_game))
+                {
+                    rows = new();
+                    status = $"Kein Cyberpunk-Layout unter: {_game.InstallDir}";
+                }
+                else
+                {
+                    var mods = _scanner.ScanAll(_game);
+                    rows = mods.Select(m => new ModRow(m)).ToList();
+                    var byType = mods.GroupBy(m => m.Type).ToDictionary(g => g.Key, g => g.Count());
+                    status = mods.Count == 0
+                        ? "Keine Mods installiert."
+                        : $"{mods.Count} Mod(s) — " + string.Join(", ",
+                            byType.OrderBy(kv => kv.Key).Select(kv =>
+                                $"{kv.Value}× {kv.Key}"));
+                }
             }
-            var mods = _scanner.ScanAll(_game);
-            _allRows = mods.Select(m => new ModRow(m)).ToList();
-            var byType = mods.GroupBy(m => m.Type).ToDictionary(g => g.Key, g => g.Count());
-            StatusText = mods.Count == 0
-                ? "Keine Mods installiert."
-                : $"{mods.Count} Mod(s) — " + string.Join(", ",
-                    byType.OrderBy(kv => kv.Key).Select(kv =>
-                        $"{kv.Value}× {kv.Key}"));
-            ApplyFilter();
-            // Async: Nexus-Enrichment (Cover + Meta) fuer alle Rows mit
-            // NexusModId aus dem Install-Manifest.
-            _ = EnrichRowsAsync(_allRows.ToArray());
-            // v0.10.0: parallel REDmod-Update-Discovery. Katalog ist ggf.
-            // schon geladen → billig; sonst holt _updateChecker.CheckAsync
-            // via RefreshAsync die erste Katalog-Seite.
-            _ = RefreshUpdatesAsync();
-        }
-        finally { IsBusy = false; }
+            catch (Exception ex)
+            {
+                _host.Logger.Warn(ex, "Installiert-Scan fehlgeschlagen: {Dir}", _game.InstallDir);
+                rows = new();
+                status = $"Scan fehlgeschlagen: {ex.Message}";
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                _allRows = rows;
+                StatusText = status;
+                ApplyFilter();
+                IsBusy = false;
+                // Async: Nexus-Enrichment (Cover + Meta) fuer alle Rows mit
+                // NexusModId aus dem Install-Manifest.
+                _ = EnrichRowsAsync(_allRows.ToArray());
+                // v0.10.0: parallel REDmod-Update-Discovery. Katalog ist ggf.
+                // schon geladen → billig; sonst holt _updateChecker.CheckAsync
+                // via RefreshAsync die erste Katalog-Seite.
+                _ = RefreshUpdatesAsync();
+            });
+        });
     }
 
     /// <summary>Fuer alle Rows mit erkannter <see cref="CyberpunkMod.NexusModId"/>
