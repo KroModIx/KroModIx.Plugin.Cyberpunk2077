@@ -64,6 +64,32 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         _downloadBus.DownloadsChanged -= _downloadsChangedHandler;
     }
 
+    /// <summary>Snapshot VOR jedem File-Write (Kernprinzip 6). Cyberpunk verteilt Mods ueber vier Ziel-Verzeichnisse, alle vier gehen rein. Fehler
+    /// duerfen den Install NIEMALS blockieren — der User will installieren,
+    /// nicht den Backup-Service debuggen. Zurueckspielen laeuft ueber das
+    /// Backups-Fenster (Sidebar-Kontextmenue), bewusst ohne Auto-Rollback.</summary>
+    private async Task TrySnapshotAsync(string label)
+    {
+        try
+        {
+            var dirs = new List<string>();
+            if (Directory.Exists(Path.Combine(_game.InstallDir, "archive", "pc", "mod"))) dirs.Add(Path.Combine(_game.InstallDir, "archive", "pc", "mod"));
+            if (Directory.Exists(Path.Combine(_game.InstallDir, "mods"))) dirs.Add(Path.Combine(_game.InstallDir, "mods"));
+            if (Directory.Exists(Path.Combine(_game.InstallDir, "bin", "x64", "plugins"))) dirs.Add(Path.Combine(_game.InstallDir, "bin", "x64", "plugins"));
+            if (Directory.Exists(Path.Combine(_game.InstallDir, "r6", "scripts"))) dirs.Add(Path.Combine(_game.InstallDir, "r6", "scripts"));
+            if (dirs.Count == 0) return;
+            var gameKey = _game.Target.SteamAppId is int appId ? $"steam:{appId}" : _game.InstallDir;
+            await _host.Backup.CreateSnapshotAsync(
+                pluginId: "kroste.cyberpunk2077", gameKey: gameKey,
+                directories: dirs, label: label);
+            await _host.Backup.PruneAsync("kroste.cyberpunk2077", gameKey, keepLast: 10);
+        }
+        catch (Exception ex)
+        {
+            _host.Logger.Warn(ex, "Snapshot fehlgeschlagen (Install laeuft trotzdem): {Label}", label);
+        }
+    }
+
     [RelayCommand]
     private void Refresh()
     {
@@ -153,6 +179,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         try
         {
             IsBusy = true;
+            await TrySnapshotAsync($"Vor Install von {row.FileName}");
             var result = await Task.Run(() => _installer.Install(row.FullPath, _game));
             _host.Notifications.Notify(result.Message,
                 result.Success ? NotificationLevel.Success : NotificationLevel.Warning);
@@ -176,6 +203,9 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
             string.Format(Strings.T("dialog.install_all_msg"), Rows.Count),
             okLabel: Strings.T("dialog.install_all_ok"));
         if (!ok) return;
+        // Bulk: EIN Snapshot vor der ganzen Schleife, nicht pro Row — beim
+        // Rollback will der User zurueck auf den Stand VOR dem Batch.
+        await TrySnapshotAsync($"Vor Bulk-Install ({Rows.Count} Archive)");
         using var scope = _host.BeginProgress(string.Format(Strings.T("progress.install_zips"), Rows.Count));
         int done = 0, failed = 0;
         foreach (var row in Rows.ToList())
