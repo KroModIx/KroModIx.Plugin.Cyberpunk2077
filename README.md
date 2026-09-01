@@ -10,7 +10,18 @@ Erkennt alle fünf gängigen Cyberpunk-Mod-Typen, Voll-Katalog vom Nexus mit
 Pagination und Server-Search, Detail-Dialog mit Screenshot-Galerie und
 KI-Zusammenfassung, ZIP/RAR/7z-Auto-Install, DE+EN-UI.
 
-## Features (v0.10)
+## Voraussetzungen
+
+Braucht den [KroModIx-Host](https://github.com/KroModIx/KroModIx) **ab
+v1.27.0** — dort sitzen der Backup-Baukasten und der gemeinsame
+Versions-Vergleich, gegen die dieses Plugin gebaut ist. Ältere Hosts laden
+das Plugin nicht.
+
+## Screenshot
+
+![Nexus-Katalog mit Voll-Katalog-Suche](docs/screenshot.png)
+
+## Features
 
 ### Neu in v0.10.0
 - **Update-Install pro Row** (nur REDmods) — der Update-Checker matcht
@@ -150,6 +161,18 @@ inaktiv". Das REDmod-Framework lädt jeden Unterordner mit `info.json`,
 der einzige zuverlässige Weg, Mods im Ordner zu behalten aber vom Loader
 zu verstecken — sowohl Vortex als auch die Community-Wiki nutzen das
 Muster. Reversibel in < 1 Sekunde, keine ZIP-Extraction.
+
+## Backups vor jedem Install
+
+Bevor das Plugin Dateien ins Spiel schreibt, legt es einen Snapshot des
+Ziel-Verzeichnisses an — bei Einzel-Installs einen pro Mod, bei Bulk-Installs
+**einen** vor dem ganzen Durchlauf. Zurückspielen läuft über das
+Backups-Fenster im Kontextmenü der Sidebar-Kachel; es gibt bewusst kein
+Auto-Rollback, damit du entscheidest, welchen Stand du zurückholst.
+Aufbewahrt werden die letzten zehn Snapshots pro Spiel.
+
+Schlägt ein Snapshot fehl, läuft der Install trotzdem durch (mit Log-Eintrag)
+— das Backup ist ein Netz, kein Türsteher.
 
 ## Lizenz
 
