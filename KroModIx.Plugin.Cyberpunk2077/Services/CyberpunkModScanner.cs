@@ -45,11 +45,18 @@ public sealed class CyberpunkModScanner
         // ist (beim Install via CyberpunkZipInstaller geschrieben).
         if (_manifests is not null)
         {
+            // v0.13.2: EIN LoadAll statt TryGet pro Mod. Vorher war das ein
+            // File.ReadAllText + JSON-Deserialize je gefundenem Mod — bei einer
+            // gewachsenen Installation Hunderte Einzel-Reads, nur um ein paar
+            // ModIds anzuhaengen.
+            var byKey = new Dictionary<string, InstallManifest>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (key, manifest) in _manifests.LoadAll())
+                byKey[key] = manifest;
             for (int i = 0; i < mods.Count; i++)
             {
                 var m = mods[i];
-                var manifest = _manifests.TryGet(m.ManifestKey);
-                if (manifest?.NexusModId is int id)
+                if (byKey.TryGetValue(m.ManifestKey, out var manifest)
+                    && manifest.NexusModId is int id)
                     mods[i] = m with { NexusModId = id };
             }
         }
