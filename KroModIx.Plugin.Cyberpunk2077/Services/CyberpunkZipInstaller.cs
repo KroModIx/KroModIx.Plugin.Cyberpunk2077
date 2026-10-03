@@ -4,15 +4,26 @@ using System.IO;
 using System.Linq;
 using KroModIx.Plugin.Contracts;
 using NLog;
-using SharpCompress.Archives;
-using SharpCompress.Common;
 
 namespace KroModIx.Plugin.Cyberpunk2077.Services;
 
 /// <summary>Installiert ein Nexus-Mod-Archiv (ZIP/RAR/7z) mit Auto-Layout-
-/// Detection ins Cyberpunk-Game-Root. Nutzt <see cref="ArchiveFactory"/>
-/// aus SharpCompress — Format wird automatisch erkannt, keine
-/// Extension-Whitelist noetig.
+/// Erkennung ins Cyberpunk-Game-Root.
+///
+/// <para><b>Seit v0.16.0 über <c>IHostServices.Archives</c></b> (Host
+/// v1.30.0). Das Plugin entscheidet weiter, <b>welches</b> Layout ein Archiv
+/// hat und <b>wohin</b> seine Dateien gehören — das ist Cyberpunk-Wissen.
+/// Das Öffnen der Formate und der Ausbruch-Schutz kommen aus dem Host.</para>
+///
+/// <para><b>Warum das keine Aufräumarbeit war.</b> Der eigene Schutz hier
+/// prüfte <c>name.Contains("..")</c>. Am 03.10.2026 nachgemessen: ein
+/// Archiv-Eintrag mit <b>absolutem</b> Namen enthält kein <c>..</c>, kommt
+/// also durch, und <c>Path.Combine(installDir, "/tmp/ausserhalb.txt")</c>
+/// gibt <c>/tmp/ausserhalb.txt</c> zurück — das Zielverzeichnis wird
+/// verworfen. Die Datei landete außerhalb des Spiels, und der Install
+/// meldete <c>Success = true</c>. Der Host-Schutz
+/// (<see cref="ArchivePathSafety"/>) löst jeden Zielpfad auf und nimmt ihn
+/// nur, wenn er wirklich unter dem Ziel landet.</para>
 ///
 /// <para>Cyberpunk-Archive enthalten typischerweise bereits die Zielordner-
 /// Struktur ausgehend vom Game-Root:</para>
@@ -30,10 +41,12 @@ namespace KroModIx.Plugin.Cyberpunk2077.Services;
 public sealed class CyberpunkZipInstaller
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+    private readonly IArchiveService _archives;
     private readonly InstallManifestStore? _manifests;
 
-    public CyberpunkZipInstaller(InstallManifestStore? manifests = null)
+    public CyberpunkZipInstaller(IArchiveService archives, InstallManifestStore? manifests = null)
     {
+        _archives = archives;
         _manifests = manifests;
     }
 
@@ -51,11 +64,13 @@ public sealed class CyberpunkZipInstaller
         "engine/",
     };
 
-    /// <summary>Unterstuetzte Archiv-Endungen fuer Downloads-Tab-Scan +
-    /// Install. SharpCompress kann noch mehr (.tar, .gz), aber Nexus-
-    /// Cyberpunk-Mods kommen fast ausschliesslich als ZIP oder RAR,
-    /// selten 7z.</summary>
-    public static readonly string[] SupportedExtensions = new[] { ".zip", ".rar", ".7z" };
+    /// <summary>Endungs-Vorfilter fuer den Downloads-Tab-Scan. Kommt aus dem
+    /// Host-Baukasten, damit ein dort neu unterstuetztes Format nicht in
+    /// neun Plugins nachgetragen werden muss.</summary>
+    public IReadOnlyList<string> SupportedExtensions => _archives.SupportedExtensions;
+
+    public bool HasSupportedExtension(string path)
+        => _archives.HasSupportedExtension(path);
 
     public ZipInstallResult Install(string archivePath, DetectedGame game)
     {
@@ -68,61 +83,61 @@ public sealed class CyberpunkZipInstaller
 
         try
         {
-            using var archive = ArchiveFactory.Open(archivePath);
-            var entries = archive.Entries
-                .Where(e => !e.IsDirectory && !string.IsNullOrEmpty(e.Key))
-                .ToList();
+            // Am Inhalt pruefen, nicht an der Endung: ein Download mit
+            // falscher Endung landete sonst unveraendert im Spiel.
+            if (_archives.DetectKind(archivePath) == ArchiveKind.Unknown)
+                return new ZipInstallResult(false,
+                    "Das ist kein lesbares Archiv (ZIP/RAR/7z) — eventuell ein abgebrochener Download.",
+                    Array.Empty<string>());
+
+            var entries = _archives.List(archivePath);
             if (entries.Count == 0)
                 return new ZipInstallResult(false, "Archiv ist leer.", Array.Empty<string>());
 
-            var normalized = entries.Select(e => (e.Key ?? "").Replace('\\', '/')).ToList();
-
             // 1) Bekannter Root im Archiv? Dann direkt ins Game-Root extrahieren.
-            bool knownLayout = normalized.Any(p =>
-                KnownRoots.Any(root => p.StartsWith(root, StringComparison.OrdinalIgnoreCase)));
+            bool knownLayout = entries.Any(e =>
+                KnownRoots.Any(root => e.Path.StartsWith(root, StringComparison.OrdinalIgnoreCase)));
 
             if (knownLayout)
             {
-                var installed = ExtractDirect(entries, installDir);
-                WriteManifests(installed, installDir, archivePath);
+                var r = _archives.Extract(archivePath, installDir);
+                if (Abgelehnt(r) is { } warnung)
+                    return new ZipInstallResult(false, warnung, r.ExtractedPaths);
+                WriteManifests(r.ExtractedPaths, installDir, archivePath);
                 return new ZipInstallResult(true,
-                    $"Direkt-Layout erkannt — {installed.Count} Datei(en) ins Game-Root extrahiert.",
-                    installed);
+                    $"Direkt-Layout erkannt — {r.Count} Datei(en) ins Game-Root extrahiert.",
+                    r.ExtractedPaths);
             }
 
             // 2) Fallback: single-.archive-Layout → archive/pc/mod/.
-            var archives = normalized.Where(p =>
-                p.EndsWith(".archive", StringComparison.OrdinalIgnoreCase)).ToList();
-            var reds = normalized.Where(p =>
-                p.EndsWith(".reds", StringComparison.OrdinalIgnoreCase)).ToList();
+            var hatArchives = entries.Any(e =>
+                e.Path.EndsWith(".archive", StringComparison.OrdinalIgnoreCase));
+            var hatReds = entries.Any(e =>
+                e.Path.EndsWith(".reds", StringComparison.OrdinalIgnoreCase));
 
-            if (archives.Count > 0 && reds.Count == 0)
+            if (hatArchives && !hatReds)
             {
                 // v0.15.0: anlegen statt annehmen — nach einer Neuinstallation
                 // gibt es archive/pc/mod nicht, und der Install lief ins Leere.
                 var target = ModFolderDiscovery.FindOrCreate(installDir, "archive/pc/mod")
                              ?? Path.Combine(installDir, "archive", "pc", "mod");
                 Directory.CreateDirectory(target);
-                var installed = new List<string>();
-                foreach (var e in entries.Where(e =>
-                    (e.Key ?? "").EndsWith(".archive", StringComparison.OrdinalIgnoreCase)))
-                {
-                    var name = Path.GetFileName((e.Key ?? "").Replace('\\', '/'));
-                    var dst = Path.Combine(target, name);
-                    ExtractOne(e, dst);
-                    installed.Add(dst);
-                }
-                WriteManifests(installed, installDir, archivePath);
+                var r = _archives.Extract(archivePath, target, new ArchiveExtractOptions(
+                    Filter: p => p.EndsWith(".archive", StringComparison.OrdinalIgnoreCase),
+                    Flatten: true));
+                if (Abgelehnt(r) is { } warnung)
+                    return new ZipInstallResult(false, warnung, r.ExtractedPaths);
+                WriteManifests(r.ExtractedPaths, installDir, archivePath);
                 return new ZipInstallResult(true,
-                    $"Flat-Layout: {installed.Count} .archive-Datei(en) nach archive/pc/mod/ extrahiert.",
-                    installed);
+                    $"Flat-Layout: {r.Count} .archive-Datei(en) nach archive/pc/mod/ extrahiert.",
+                    r.ExtractedPaths);
             }
 
             return new ZipInstallResult(false,
                 "Unbekanntes Archiv-Layout — bitte manuell entpacken. " +
                 $"Archiv enthält {entries.Count} Dateien in Ordnern: " +
-                string.Join(", ", normalized.Take(5)
-                    .Select(p => Path.GetDirectoryName(p)).Distinct()),
+                string.Join(", ", entries.Take(5)
+                    .Select(e => Path.GetDirectoryName(e.Path)).Distinct()),
                 Array.Empty<string>());
         }
         catch (Exception ex)
@@ -132,29 +147,27 @@ public sealed class CyberpunkZipInstaller
         }
     }
 
-    private static IReadOnlyList<string> ExtractDirect(
-        IEnumerable<IArchiveEntry> entries, string installDir)
+    /// <summary>Hat der Ausbruch-Schutz Einträge abgelehnt, bricht der
+    /// Install mit Meldung ab — statt still das zu installieren, was
+    /// durchkam.
+    ///
+    /// <para>Der Abbruch trifft auch ein bloß kaputtes Archiv, bei dem ein
+    /// einzelner Eintrag von zweihundert krumm ist. Das ist bewusst: ein
+    /// Archiv, das aus dem Spielverzeichnis herausschreiben will, ist nicht
+    /// „überwiegend in Ordnung", und die Entscheidung, es trotzdem zu
+    /// nehmen, gehört dem Nutzer und nicht einer Zeile Code. Die bereits
+    /// geschriebenen Dateien stehen in der Antwort, damit die Meldung sagen
+    /// kann, was schon im Spiel liegt.</para></summary>
+    private static string? Abgelehnt(ArchiveExtractResult r)
     {
-        var installed = new List<string>();
-        foreach (var e in entries)
-        {
-            var name = (e.Key ?? "").Replace('\\', '/');
-            if (string.IsNullOrEmpty(name) || name.EndsWith('/')) continue;
-            // Zip-Slip-Prevention: keine ../-Pfade akzeptieren.
-            if (name.Contains("..")) { Log.Warn("Zip-Slip-Attempt: {Name}", name); continue; }
-            var dst = Path.Combine(installDir, name.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
-            ExtractOne(e, dst);
-            installed.Add(dst);
-        }
-        return installed;
-    }
-
-    private static void ExtractOne(IArchiveEntry entry, string destination)
-    {
-        using var input = entry.OpenEntryStream();
-        using var output = File.Create(destination);
-        input.CopyTo(output);
+        if (r.SkippedUnsafe.Count == 0) return null;
+        Log.Warn("Ausbruchsversuch im Archiv, {Count} Eintrag/Einträge abgelehnt: {Entries}",
+            r.SkippedUnsafe.Count, string.Join(", ", r.SkippedUnsafe));
+        return $"Abgebrochen: {r.SkippedUnsafe.Count} Eintrag/Einträge wollten aus dem "
+             + "Spielverzeichnis herausschreiben — "
+             + string.Join(", ", r.SkippedUnsafe.Take(3))
+             + (r.SkippedUnsafe.Count > 3 ? ", …" : "")
+             + $". {r.Count} Datei(en) waren schon geschrieben, bevor das auffiel.";
     }
 
     /// <summary>Fuer jeden installierten Mod-Bestandteil ein Manifest im

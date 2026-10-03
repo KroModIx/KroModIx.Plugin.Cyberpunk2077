@@ -17,6 +17,7 @@
     </PackageReference>
     <PackageReference Include="FluentAssertions" />
     <PackageReference Include="KroModIx.Plugin.Contracts" />
+    <PackageReference Include="KroModIx.Plugin.TestKit" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\KroModIx.Plugin.Cyberpunk2077\KroModIx.Plugin.Cyberpunk2077.csproj" />

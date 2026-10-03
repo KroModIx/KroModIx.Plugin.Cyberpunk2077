@@ -100,7 +100,7 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier, IConf
         _pluginPaths = new CyberpunkPaths(host);
         _downloader = new CyberpunkDownloader(host.Nexus,
             host.CreateHttpClient("cyberpunk-downloads"), _pluginPaths);
-        _zipInstaller = new CyberpunkZipInstaller(_manifests);
+        _zipInstaller = new CyberpunkZipInstaller(host.Archives, _manifests);
         _updateChecker = new CyberpunkUpdateChecker(_scanner, _catalog, _manifests);
         // v0.12.2: dem UpdateChecker die Liste aktuell installierter Mods
         // liefern — er garbage-collectet damit verwaiste Manifests (User

@@ -44,6 +44,54 @@ Detection, REDmod-Deploy) ist vollständig umgesetzt — der Deploy-Trigger sitz
 seit v0.10.0 als Button in der Installiert-Toolbar und ruft `redmod.exe deploy`
 aus `tools/redmod/bin/` auf, Windows-nativ. Er bleibt bewusst manuell.
 
+## Archive kommen aus dem Host (ab v0.16.0)
+
+`CyberpunkZipInstaller` bekommt `IHostServices.Archives` eingespritzt; das
+Plugin entscheidet weiter, **welches** Layout ein Archiv hat und **wohin**
+seine Dateien gehören — das ist Cyberpunk-Wissen. Das Öffnen der Formate und
+der Ausbruch-Schutz kommen aus dem Host, SharpCompress ist aus dem Plugin
+verschwunden.
+
+**Das war kein Aufräumen.** Der eigene Schutz prüfte
+`name.Contains("..")`. Am 03.10.2026 gegen den damaligen Code gemessen, mit
+einem ZIP, dessen zweiter Eintrag `/tmp/ausserhalb.txt` heißt:
+
+```
+MESSUNG: Install.Success = True, Dateien = 2
+MESSUNG: Datei ausserhalb des InstallDir vorhanden = True
+MESSUNG: Inhalt = UEBERNOMMEN
+```
+
+Ein absoluter Eintragsname enthält kein `..`, kommt also durch den Test, und
+`Path.Combine(installDir, "/tmp/ausserhalb.txt")` gibt
+`/tmp/ausserhalb.txt` zurück — das Zielverzeichnis wird verworfen. Der
+Install meldete Erfolg. Als Test festgehalten
+(`Absoluter_Eintragsname_bricht_nicht_aus`).
+
+**Der alte Zip-Slip-Test konnte nicht fehlschlagen.** Er benutzte
+`archive/pc/mod/../../../evil.archive` — drei Ebenen hinauf aus drei Ebenen
+hinein, das landet genau wieder im Spielverzeichnis. Geprüft wurde dann, dass
+die Datei nicht an einer Stelle liegt, an der sie auch nie gelandet wäre.
+Jetzt mit einer Ebene mehr, und der Fall „`..` bleibt unter dem Ziel" steht
+als eigener Test daneben.
+
+**Drei Entscheidungen, die der Code allein nicht hergibt:**
+
+- **Ein Ausbruchsversuch bricht den Install ab**, statt still das zu
+  installieren, was durchkam. Das trifft auch ein bloß kaputtes Archiv, bei
+  dem ein Eintrag von zweihundert krumm ist — bewusst: ein Archiv, das aus
+  dem Spielverzeichnis herausschreiben will, ist nicht „überwiegend in
+  Ordnung", und die Entscheidung gehört dem Nutzer.
+- **Die Meldung nennt, was schon geschrieben wurde.** Nach dem Abbruch muss
+  der Nutzer wissen, was er aufräumen soll.
+- **Der Endungs-Vorfilter kommt aus `_archives.SupportedExtensions`**, nicht
+  aus einer Plugin-Konstante. Ein im Host neu unterstütztes Format muss nicht
+  in neun Plugins nachgetragen werden.
+
+Die Tests nutzen `KroModIx.Plugin.TestKit` (Paket aus demselben Host-Tag);
+der Ausbruch-Schutz darin ist **nicht** nachgebaut, sondern dieselbe Funktion
+`ArchivePathSafety` aus den Contracts.
+
 ## Referenzen
 
 - **Vortex Cyberpunk-Extension** (`Nexus-Mods/vortex-games` auf GitHub) —

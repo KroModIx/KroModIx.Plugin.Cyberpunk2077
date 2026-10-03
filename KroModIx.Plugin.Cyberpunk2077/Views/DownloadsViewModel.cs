@@ -102,8 +102,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         }
         var archives = Directory.EnumerateFiles(_paths.DownloadsDir, "*",
                 SearchOption.TopDirectoryOnly)
-            .Where(p => CyberpunkZipInstaller.SupportedExtensions
-                .Any(ext => p.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
+            .Where(_installer.HasSupportedExtension)
             .ToList();
         foreach (var p in archives.OrderByDescending(File.GetLastWriteTimeUtc))
         {

@@ -13,9 +13,9 @@ KI-Zusammenfassung, ZIP/RAR/7z-Auto-Install, DE+EN-UI.
 ## Voraussetzungen
 
 Braucht den [KroModIx-Host](https://github.com/KroModIx/KroModIx) **ab
-v1.27.0** — dort sitzen der Backup-Baukasten und der gemeinsame
-Versions-Vergleich, gegen die dieses Plugin gebaut ist. Ältere Hosts laden
-das Plugin nicht.
+v1.32.0** — dort sitzen der Backup-Baukasten, der gemeinsame
+Versions-Vergleich und seit v0.16.0 der Archiv-Baukasten samt Ausbruch-Schutz,
+gegen die dieses Plugin gebaut ist. Ältere Hosts laden das Plugin nicht.
 
 ## Screenshot
 
