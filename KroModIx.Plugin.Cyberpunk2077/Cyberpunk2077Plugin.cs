@@ -128,6 +128,8 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier, IConf
         _mediaScraper = new NexusMediaScraper(host.CreateHttpClient("cyberpunk-nexus-scrape"));
         _activatedGames = activatedGames;
 
+        EnsureModFolders(host, activatedGames);
+
         // v0.4: Auto-Update-Check nach 15s Bootstrap-Delay. Kein Katalog-
         // Live-Refresh — die 3 Nexus-Endpoints werden im Nexus-Tab manuell
         // getriggert. Der Check nutzt was der Katalog gerade hat.
@@ -158,6 +160,40 @@ public sealed class Cyberpunk2077Plugin : IGameModPlugin, IUpdateNotifier, IConf
             }
         }
         return Task.CompletedTask;
+    }
+
+    /// <summary>v0.15.0: legt die beiden vanilla-unterstuetzten Mod-Ordner an,
+    /// wenn sie fehlen — <c>archive/pc/mod</c> (das Spiel liest ihn selbst) und
+    /// <c>mods</c> (REDmod, offiziell von CDPR). Beide gehoeren NICHT zur
+    /// Vanilla-Installation: sie entstehen durch die erste Mod und sind nach
+    /// einer Neuinstallation weg. Vorher war das eine Sackgasse — der
+    /// Installiert-Tab blieb leer, und installieren ging auch nicht, weil das
+    /// Ziel fehlte.
+    ///
+    /// <para>Die drei Loader-Ordner (CET, RED4ext, redscript) werden bewusst
+    /// NICHT angelegt: ohne den jeweiligen Loader waere ein leerer Ordner nur
+    /// Attrappe. Die legt der Loader bei seiner Installation selbst an, und
+    /// <see cref="CyberpunkPathResolver"/> findet sie dann — auch mit
+    /// abweichender Gross-/Kleinschreibung.</para></summary>
+    private void EnsureModFolders(IHostServices host, IReadOnlyList<DetectedGame> games)
+    {
+        foreach (var game in games)
+        {
+            if (string.IsNullOrEmpty(game.InstallDir) || !Directory.Exists(game.InstallDir))
+                continue;
+            foreach (var (label, dir) in new[]
+                     {
+                         ("archive/pc/mod", _paths!.EnsureArchiveDir(game)),
+                         ("mods", _paths!.EnsureRedModDir(game)),
+                     })
+            {
+                if (dir is null)
+                    host.Logger.Warn("Cyberpunk: {Label} weder gefunden noch anlegbar unter {Dir}",
+                        label, game.InstallDir);
+                else
+                    host.Logger.Info("Cyberpunk Mod-Ordner: {Dir}", dir);
+            }
+        }
     }
 
     public IEnumerable<IGameTabContribution> GetTabContributions(DetectedGame game)

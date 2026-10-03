@@ -290,7 +290,19 @@ public sealed partial class InstalledModsViewModel : ObservableObject
     {
         // Öffnet den archive/pc/mod-Ordner. Der User-häufigste Fall — für
         // die anderen 4 Ordner reicht der File-Manager selbst.
-        _host.Shell.OpenDirectory(_paths.GetArchiveDir(_game));
+        // v0.15.0: Ensure statt Get — nach einer Neuinstallation existiert der
+        // Ordner nicht, und ein OpenDirectory auf einen fehlenden Pfad tut
+        // nichts sichtbares. Das Spiel liest archive/pc/mod selbst, der Ordner
+        // ist also kein Fremdkoerper.
+        var dir = _paths.EnsureArchiveDir(_game);
+        if (dir is null)
+        {
+            _host.Notifications.Notify(
+                $"Mod-Ordner konnte nicht angelegt werden: {_game.InstallDir}",
+                NotificationLevel.Warning);
+            return;
+        }
+        _host.Shell.OpenDirectory(dir);
     }
 
     /// <summary>Bulk-Disable aller sichtbaren enabled Mods. Für Debug/

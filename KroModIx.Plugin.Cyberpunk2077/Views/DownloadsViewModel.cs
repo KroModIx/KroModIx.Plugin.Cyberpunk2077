@@ -72,11 +72,12 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     {
         try
         {
-            var dirs = new List<string>();
-            if (Directory.Exists(Path.Combine(_game.InstallDir, "archive", "pc", "mod"))) dirs.Add(Path.Combine(_game.InstallDir, "archive", "pc", "mod"));
-            if (Directory.Exists(Path.Combine(_game.InstallDir, "mods"))) dirs.Add(Path.Combine(_game.InstallDir, "mods"));
-            if (Directory.Exists(Path.Combine(_game.InstallDir, "bin", "x64", "plugins"))) dirs.Add(Path.Combine(_game.InstallDir, "bin", "x64", "plugins"));
-            if (Directory.Exists(Path.Combine(_game.InstallDir, "r6", "scripts"))) dirs.Add(Path.Combine(_game.InstallDir, "r6", "scripts"));
+            // v0.15.0: ueber ModFolderDiscovery statt vier fester Pfade — sonst
+            // wird ein abweichend geschriebener Ordner (unter Linux moeglich)
+            // nicht gesichert, und die Snapshot-Liste weicht von dem ab, was
+            // der Scanner tatsaechlich liest.
+            var dirs = ModFolderDiscovery.FindAll(_game.InstallDir,
+                "archive/pc/mod", "mods", "bin/x64/plugins", "r6/scripts").ToList();
             if (dirs.Count == 0) return;
             var gameKey = _game.Target.SteamAppId is int appId ? $"steam:{appId}" : _game.InstallDir;
             await _host.Backup.CreateSnapshotAsync(

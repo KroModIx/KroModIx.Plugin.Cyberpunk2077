@@ -98,7 +98,10 @@ public sealed class CyberpunkZipInstaller
 
             if (archives.Count > 0 && reds.Count == 0)
             {
-                var target = Path.Combine(installDir, "archive", "pc", "mod");
+                // v0.15.0: anlegen statt annehmen — nach einer Neuinstallation
+                // gibt es archive/pc/mod nicht, und der Install lief ins Leere.
+                var target = ModFolderDiscovery.FindOrCreate(installDir, "archive/pc/mod")
+                             ?? Path.Combine(installDir, "archive", "pc", "mod");
                 Directory.CreateDirectory(target);
                 var installed = new List<string>();
                 foreach (var e in entries.Where(e =>
