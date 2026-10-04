@@ -100,3 +100,25 @@ der Ausbruch-Schutz darin ist **nicht** nachgebaut, sondern dieselbe Funktion
    — offizielle info.json-Schema-Doku.
 - **KroModIx-Plugin-Skill** (`~/.claude/skills/KroModIx-Plugin/`) — alle
   Kroste-Konventionen.
+
+## Fremde Mod-Manager (ab v0.17.0)
+
+`CyberpunkModScanner` markiert über `CyberpunkMod.MitVerwalterErkennung()`, wenn ein Eintrag
+unter `fünf Mod-Orten` **einem anderen Mod-Manager** gehört —
+`ForeignManagerDetection` aus den Contracts (v1.34.0). Vortex und lmm liefern in dieselben fünf Verzeichnisse.
+
+**Erkannt am Verweis, nicht am Namen.** Die fremden Werkzeuge legen Verweise
+in ihren eigenen Zwischenspeicher; eine von Hand hineinkopierte Mod ist eine
+gewöhnliche Datei. Damit trägt es auch für Manager, deren Namensschema niemand
+kennt. `Uninstall` und `SetEnabled` werfen dann mit einer Meldung, die
+Verwalter, Folge und Ausweg nennt.
+
+**Die Erkennung läuft einmal beim Scan, nicht als berechnete Eigenschaft.**
+Sonst löst jede Bindung in der Oberfläche einen Dateisystem-Zugriff aus.
+
+**Der Anlass ist bezahlt, nur in einem anderen Plugin.** Am 04.10.2026 hat ein
+Deinstallieren-Klick im Icarus-Plugin lmms zusammengeführtes Pak entfernt und
+damit lautlos eine Mod aus dem Spiel genommen — die Quelle lag unversehrt in
+lmms Zwischenspeicher, und gesucht wurde der Fehler danach stundenlang im
+Spiel. Nachgemessen hatten **9 von 9** Plugins löschende Pfade und genau
+eines erkannte Verweise.

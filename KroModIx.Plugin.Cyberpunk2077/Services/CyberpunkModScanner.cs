@@ -60,7 +60,9 @@ public sealed class CyberpunkModScanner
                     mods[i] = m with { NexusModId = id };
             }
         }
+        // Fremdverwaltete Eintraege einmal beim Scan markieren.
         return mods
+            .Select(m => m.MitVerwalterErkennung())
             .OrderBy(m => m.Type)
             .ThenBy(m => m.Name, StringComparer.CurrentCultureIgnoreCase)
             .ToList();

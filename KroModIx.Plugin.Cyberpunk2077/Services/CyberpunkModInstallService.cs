@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using NLog;
+using KroModIx.Plugin.Contracts;
 
 namespace KroModIx.Plugin.Cyberpunk2077.Services;
 
@@ -19,8 +20,20 @@ public sealed class CyberpunkModInstallService
     /// <summary>Ändert den enabled-Zustand durch Rename. Liefert den neuen
     /// Pfad zurück (mit oder ohne .disabled-Suffix). Bei bereits gewünschtem
     /// Zustand: keine Aktion, gibt den vorhandenen Pfad zurück.</summary>
+    /// <summary>Wirft, wenn der Eintrag einem fremden Mod-Manager gehört. Die
+    /// Meldung nennt Verwalter, Folge und Ausweg — am 04.10.2026 hat genau so
+    /// ein Löschen im Icarus-Plugin eine Mod aus dem Spiel genommen, ohne dass
+    /// es auffiel, weil die Quelle woanders unversehrt lag.</summary>
+    private static void NurWennUnser(CyberpunkMod mod, string verb)
+    {
+        if (mod.CanModify) return;
+        throw new InvalidOperationException(
+            ForeignManagerDetection.Meldung(mod.Name, mod.ManagedBy, verb));
+    }
+
     public string SetEnabled(CyberpunkMod mod, bool enabled)
     {
+        NurWennUnser(mod, "umschalten");
         if (mod.IsEnabled == enabled) return mod.Path;
         var newPath = TargetPathForState(mod, enabled);
         if (string.Equals(newPath, mod.Path, StringComparison.OrdinalIgnoreCase))
@@ -61,6 +74,7 @@ public sealed class CyberpunkModInstallService
     /// Recursive-Delete). Wenn der Pfad nicht existiert: no-op.</summary>
     public void Uninstall(CyberpunkMod mod)
     {
+        NurWennUnser(mod, "deinstallieren");
         try
         {
             if (File.Exists(mod.Path))
